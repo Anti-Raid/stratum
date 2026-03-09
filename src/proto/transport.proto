@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package stratum;
+
+enum TenantType {
+  USER = 0;
+  GUILD = 1;
+}
+
+message Id {
+  uint64 tenant_id = 1;
+  TenantType tenant_type = 2;
+}
+
+// A event from discord to the target worker
+message DiscordEvent {
+    // The event name, e.g. MESSAGE_CREATE
+    string event_name = 1;
+    
+    // The event payload, json encoded string
+    string payload = 2;
+
+    // The tenant id this event is associated with
+    Id id = 3;
+}
+
+message Worker {
+    uint32 worker_id = 1;
+    string grpc_access_key = 2;
+}
+
+// Stratum service (runs on stratum and called by template-worker)
+service Stratum {
+    // EventStream is a bidirectional streaming RPC that allows the master to send Discord events to the worker
+    rpc EventStream(Worker) returns (stream DiscordEvent);
+}
