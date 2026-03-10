@@ -412,7 +412,6 @@ impl pb::stratum_server::Stratum for StratumServer {
 async fn dispatcher(mut shard: Shard, mut shutdown: watch::Receiver<bool>, common_state: CommonState) {
     log::info!("Starting shard with ID: {}", shard.id());
     let sd = common_state.shards.get_shard_data(shard.id().number());
-    let cache = common_state.cache.clone();
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
     loop {
         tokio::select! {
@@ -442,59 +441,51 @@ async fn dispatcher(mut shard: Shard, mut shutdown: watch::Receiver<bool>, commo
                     Message::Text(json_str) => json_str
                 };
 
-                let (event, event_name) = match eventparse::parse(&json_str, EventTypeFlags::all()) {
-                    Ok((event, event_name)) => {
-                        let Some(event_name) = event_name else {
-                            log::warn!("Received event with unknown type for shard with ID: {}: {}", shard.id(), json_str);
-                            continue;
-                        };
-                        (event, event_name)
-                    },
-                    Err(e) => {
-                        log::error!("Error parsing event for shard with ID: {}: {}", shard.id(), e);
-                        continue;
-                    }
-                };
-
-                let parsed_event: Option<Event> = match event {
-                    Some(event) => {
-                        // Try to convert to concrete event type
-                        match event.try_into() {
-                            Ok(event) => {
-                                cache.update(&event);
-                                Some(event)
-                            },
-                            Err(e) => {
-                                log::error!("Failed to convert gateway event for shard with ID: {} with error: {}", shard.id(), e);
-                                None
-                            }
-                        }
-                    },
-                    None => None, // unknown event, use wildcard parsing
-                };
-
-                if is_internal_event(&event_name) {
-                    // Don't send internal events to workers
-                    continue;
+                if let Err(e) = dispatch_single(json_str, &common_state) {
+                    log::warn!("dispatch_single on shard {} failed: {e}", shard.id());
                 }
-
-                let Some(guild_id) = deduce_guild_id(&json_str, &parsed_event) else {
-                    // ignore events we can't deduce a guild_id for, since we won't know which tenant to route them to
-                    //
-                    // TODO: Change this when we support user-installed apps in stratum
-                    continue; 
-                };
-
-                let tenant_id = TenantId::Guild(guild_id);
-                let worker = common_state.workers.get_worker(tenant_id);
-                worker.send_event(pb::DiscordEvent {
-                    event_name,
-                    payload: json_str,
-                    id: Some(pb::Id::from_tenant_id(tenant_id)),
-                });
             }
         }
     }
+}
+
+/// Helper method to actually perform the event dispatch + cache update
+fn dispatch_single(event_json: String, common_state: &CommonState) -> Result<(), crate::Error> {
+    let (event, event_name) = eventparse::parse(&event_json, EventTypeFlags::all())?;
+    let Some(event_name) = event_name else {
+        return Err("Received event with unknown type".into());
+    };
+
+    let parsed_event: Option<Event> = match event {
+        Some(event) => {
+            let event = event.into();
+            common_state.cache.update(&event);
+            Some(event)
+        },
+        None => None, // unknown event, use wildcard parsing
+    };
+
+    if is_internal_event(&event_name) {
+        // Don't send internal events to workers
+        return Ok(());
+    }
+
+    let Some(guild_id) = deduce_guild_id(&event_json, &parsed_event) else {
+        // ignore events we can't deduce a guild_id for, since we won't know which tenant to route them to
+        //
+        // TODO: Change this when we support user-installed apps in stratum
+        return Ok(()); 
+    };
+
+    let tenant_id = TenantId::Guild(guild_id);
+    let worker = common_state.workers.get_worker(tenant_id);
+    worker.send_event(pb::DiscordEvent {
+        event_name,
+        payload: event_json,
+        id: Some(pb::Id::from_tenant_id(tenant_id)),
+    });
+
+    Ok(())
 }
 
 /// Helper method to deduce the guild_id from an event, if possible
