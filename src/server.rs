@@ -2,9 +2,10 @@ use std::{pin::Pin, sync::{Arc, RwLock}, time::Duration};
 use serde::Deserialize;
 use tokio::{signal, sync::watch, sync::mpsc};
 use twilight_cache_inmemory::model::CachedGuild;
+use twilight_gateway_queue::InMemoryQueue;
 use twilight_model::{channel::Channel, gateway::OpCode, id::{Id, marker::GuildMarker}};
 use twilight_gateway::{
-    CloseFrame, Config, Event, EventTypeFlags, Intents, Message, Shard, ShardState
+    CloseFrame, ConfigBuilder, Event, EventTypeFlags, Intents, Message, Shard, ShardId, ShardState
 };
 use twilight_http::Client;
 use futures_util::{Stream, StreamExt};
@@ -525,10 +526,25 @@ pub async fn server() -> Result<(), crate::Error> {
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let client = Arc::new(Client::new(CONFIG.token.clone()));
-    let config = Config::new(CONFIG.token.clone(), Intents::from_bits(CONFIG.intents).expect("Invalid intents in config"));
-    let shards = twilight_gateway::create_recommended(&client, config, |_, builder| builder.build())
-        .await?;
+
+    let get_gw = client.gateway().authed().await?.model().await?;
+    let queue = InMemoryQueue::new(
+        get_gw.session_start_limit.max_concurrency,
+        get_gw.session_start_limit.remaining,
+        Duration::from_millis(get_gw.session_start_limit.reset_after),
+        get_gw.session_start_limit.total,
+    );
+
+    let config = ConfigBuilder::new(CONFIG.token.clone(), Intents::from_bits(CONFIG.intents).expect("Invalid intents in config"))
+    .queue(queue)
+    .build();
+
+    let shards = (0..get_gw.shards).map(|shard| {
+        let shard_id = ShardId::new(shard, get_gw.shards);
+        Shard::with_config(shard_id, config.clone())
+    });
     let common_state = CommonState::new(shards.len());
+
     let mut tasks = shards
         .map(|shard| tokio::spawn(dispatcher(shard, shutdown_rx.clone(), common_state.clone())))
         .collect::<Vec<_>>();
