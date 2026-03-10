@@ -35,6 +35,9 @@ prost-types = "0.14"
 tokio-stream = "0.1"
 bitflags = "2.11.0"
 
+# guild cache retrieval
+rayon = "1.11.0"
+
 [dependencies.tokio]
 version = "1"
 features = ["sync", "macros", "rt-multi-thread", "tracing", "process", "signal"]

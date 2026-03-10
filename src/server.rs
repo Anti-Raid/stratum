@@ -358,7 +358,16 @@ impl pb::stratum_server::Stratum for StratumServer {
                 .ok_or_else(|| Status::invalid_argument("Missing guild_id in request"))?;
                 let flags = crate::cacher_guild::GuildFetchOpts::from_bits_truncate(ccr.flags);
 
-                let g = match crate::cacher_guild::get_guild(&self.common_state.cache, id, flags) {
+                // Fetch the guild (using a sep thread if needed)
+                let g_opt = if flags.is_expensive() {
+                    let cache = self.common_state.cache.clone();
+                    tokio::task::spawn_blocking(move || crate::cacher_guild::get_guild(&cache, id, flags)).await
+                    .map_err(|e| Status::internal(e.to_string()))?
+                } else {
+                    crate::cacher_guild::get_guild(&self.common_state.cache, id, flags)
+                };
+
+                let g = match g_opt {
                     Some(g) => pb::AnyValue::from_real(&g),
                     None => pb::AnyValue::from_real(&None::<CachedGuild>)
                 }?; 

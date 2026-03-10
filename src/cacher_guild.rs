@@ -1,55 +1,84 @@
 //! Constructs a guild object from cache if possible. Based on https://github.com/Gelbpunkt/gateway-proxy/blob/main/src/cache.rs
 
 use twilight_model::{channel::{Channel, StageInstance, message::Sticker}, gateway::presence::{Presence, UserOrId}, guild::{Emoji, Guild, Member, Role, scheduled_event::GuildScheduledEvent}, id::{Id, marker::{GuildMarker, UserMarker}}, voice::VoiceState};
+use rayon::prelude::*;
+
+const MIN_CHANNELS_TILL_THREADPOOL: usize = 100;
+const MIN_MEMBERS_TILL_THREADPOOL: usize = 1000;
+const MIN_PRESENCES_TILL_THREADPOOL: usize = 1000;
 
 bitflags::bitflags! {
     #[derive(Copy, Clone)]
     pub struct GuildFetchOpts: u32 {
         // Whether to also fetch members
         const INCLUDE_MEMBERS = 1 << 0;
+        // Whether to also fetch presences
+        const INCLUDE_PRESENCES = 1 << 1;
     }
 }
 
-fn channels_in_guild(cache: &twilight_cache_inmemory::InMemoryCache, guild_id: Id<GuildMarker>) -> Vec<Channel> {
-    cache
-        .guild_channels(guild_id)
-        .map(|reference| {
-            reference
-                .iter()
-                .filter_map(|channel_id| {
-                    let channel = cache.channel(*channel_id)?;
+impl GuildFetchOpts {
+    /// Returns true if GuildFetchOpts is expensive enough to need to run on its own thread
+    pub fn is_expensive(&self) -> bool {
+        self.contains(Self::INCLUDE_MEMBERS)
+    } 
+}
 
-                    if channel.kind.is_thread() {
-                        None
-                    } else {
-                        Some(channel.value().clone())
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+fn channels_and_threads(cache: &twilight_cache_inmemory::InMemoryCache, guild_id: Id<GuildMarker>) -> (Vec<Channel>, Vec<Channel>) {
+    cache.guild_channels(guild_id).map(|reference| {
+        if reference.len() < MIN_CHANNELS_TILL_THREADPOOL {
+            reference.iter().filter_map(|id| {
+                let chan = cache.channel(*id)?;
+                Some(chan.value().clone())
+            }).partition(|chan| !chan.kind.is_thread())
+        } else {
+            reference.par_iter().filter_map(|id| {
+                let chan = cache.channel(*id)?;
+                Some(chan.value().clone())
+            }).partition(|chan| !chan.kind.is_thread())
+        }
+    }).unwrap_or_default()
 }
 
 fn presences_in_guild(cache: &twilight_cache_inmemory::InMemoryCache, guild_id: Id<GuildMarker>) -> Vec<Presence> {
     cache
         .guild_presences(guild_id)
         .map(|reference| {
-            reference
-                .iter()
-                .filter_map(|user_id| {
-                    let presence = cache.presence(guild_id, *user_id)?;
+            if reference.len() < MIN_PRESENCES_TILL_THREADPOOL {
+                reference
+                    .iter()
+                    .filter_map(|user_id| {
+                        let presence = cache.presence(guild_id, *user_id)?;
 
-                    Some(Presence {
-                        activities: presence.activities().to_vec(),
-                        client_status: presence.client_status().clone(),
-                        guild_id: presence.guild_id(),
-                        status: presence.status(),
-                        user: UserOrId::UserId {
-                            id: presence.user_id(),
-                        },
+                        Some(Presence {
+                            activities: presence.activities().to_vec(),
+                            client_status: presence.client_status().clone(),
+                            guild_id: presence.guild_id(),
+                            status: presence.status(),
+                            user: UserOrId::UserId {
+                                id: presence.user_id(),
+                            },
+                        })
                     })
-                })
-                .collect()
+                    .collect()
+            } else {
+                reference
+                    .par_iter()
+                    .filter_map(|user_id| {
+                        let presence = cache.presence(guild_id, *user_id)?;
+
+                        Some(Presence {
+                            activities: presence.activities().to_vec(),
+                            client_status: presence.client_status().clone(),
+                            guild_id: presence.guild_id(),
+                            status: presence.status(),
+                            user: UserOrId::UserId {
+                                id: presence.user_id(),
+                            },
+                        })
+                    })
+                    .collect()
+            }
         })
         .unwrap_or_default()
 }
@@ -107,10 +136,17 @@ fn members_in_guild(cache: &twilight_cache_inmemory::InMemoryCache, guild_id: Id
     cache
         .guild_members(guild_id)
         .map(|reference| {
-            reference
-                .iter()
-                .filter_map(|user_id| member(cache, guild_id, *user_id))
-                .collect()
+            if reference.len() < MIN_MEMBERS_TILL_THREADPOOL {
+                reference
+                    .iter()
+                    .filter_map(|user_id| member(cache, guild_id, *user_id))
+                    .collect()
+            } else {
+                reference
+                    .par_iter()
+                    .filter_map(|user_id| member(cache, guild_id, *user_id))
+                    .collect()
+            }
         })
         .unwrap_or_default()
 }
@@ -221,26 +257,6 @@ fn voice_states_in_guild(cache: &twilight_cache_inmemory::InMemoryCache, guild_i
         .unwrap_or_default()
 }
 
-fn threads_in_guild(cache: &twilight_cache_inmemory::InMemoryCache, guild_id: Id<GuildMarker>) -> Vec<Channel> {
-    cache
-        .guild_channels(guild_id)
-        .map(|reference| {
-            reference
-                .iter()
-                .filter_map(|channel_id| {
-                    let channel = cache.channel(*channel_id)?;
-
-                    if channel.kind.is_thread() {
-                        Some(channel.value().clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 pub fn get_guild(
     cache: &twilight_cache_inmemory::InMemoryCache,
     guild_id: Id<GuildMarker>,
@@ -250,8 +266,8 @@ pub fn get_guild(
         return None;
     };
 
-    let guild_channels = channels_in_guild(cache, guild.id());
-    let presences = presences_in_guild(cache, guild.id());
+    let (guild_channels, threads) = channels_and_threads(cache, guild.id());
+    let presences = if flags.contains(GuildFetchOpts::INCLUDE_PRESENCES) { presences_in_guild(cache, guild.id()) } else { vec![] };
     let emojis = emojis_in_guild(cache, guild.id());
     let members = if flags.contains(GuildFetchOpts::INCLUDE_MEMBERS) { members_in_guild(cache, guild.id()) } else { vec![] };
     let roles = roles_in_guild(cache, guild.id());
@@ -259,7 +275,6 @@ pub fn get_guild(
     let stage_instances = stage_instances_in_guild(cache, guild.id());
     let stickers = stickers_in_guild(cache, guild.id());
     let voice_states = voice_states_in_guild(cache, guild.id());
-    let threads = threads_in_guild(cache, guild.id());
 
     let new_guild = Guild {
         afk_channel_id: guild.afk_channel_id(),
