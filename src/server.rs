@@ -2,7 +2,7 @@ use std::{pin::Pin, sync::{Arc, RwLock}, time::Duration};
 use serde::Deserialize;
 use tokio::{signal, sync::watch, sync::mpsc};
 use twilight_cache_inmemory::model::CachedGuild;
-use twilight_model::{channel::Channel, gateway::payload::incoming::{ChannelUpdate, GuildUpdate}, guild::PartialGuild, id::{Id, marker::GuildMarker}};
+use twilight_model::{channel::Channel, id::{Id, marker::GuildMarker}};
 use twilight_gateway::{
     CloseFrame, Config, Event, EventTypeFlags, Intents, Message, Shard, ShardState
 };
@@ -22,6 +22,7 @@ fn encode_any<T: serde::Serialize>(msg: &T) -> Result<Vec<u8>, crate::Error> {
     Ok(bytes)
 }
 
+#[allow(dead_code)]
 fn decode_any<T: for<'de> serde::Deserialize<'de>>(msg: &[u8]) -> Result<T, crate::Error> {
     let decoded: T = rmp_serde::from_slice(msg)
         .map_err(|e| format!("Failed to deserialize Mesophyll any: {}", e))?;
@@ -39,6 +40,7 @@ impl pb::AnyValue {
         Ok(Self { data })
     }
 
+    #[allow(dead_code)]
     pub fn to_real<T: for<'de> serde::Deserialize<'de>>(&self) -> Result<T, Status> {
         self.to_real_exec().map_err(|e| Status::internal(e.to_string()))
     }
@@ -259,6 +261,7 @@ impl StratumServer {
         let svc = pb::stratum_server::StratumServer::new(self.clone());
         log::info!("Starting gRPC server on {}", addr);
         tonic::transport::Server::builder()
+            .max_frame_size(Some(1024 * 1024 * 16)) // 16MB
             .add_service(svc)
             .serve_with_shutdown(addr, async {
                 // Wait for the shutdown signal
@@ -352,68 +355,17 @@ impl pb::stratum_server::Stratum for StratumServer {
             }
             pb::ResourceType::RGuild => {
                 let id = Id::new_checked(ccr.id)
-                .ok_or_else(|| Status::invalid_argument("Missing channel info in request"))?;
+                .ok_or_else(|| Status::invalid_argument("Missing guild_id in request"))?;
+                let flags = crate::cacher_guild::GuildFetchOpts::from_bits_truncate(ccr.flags);
 
-                let g = match self.common_state.cache.guild(id) {
-                    Some(g) => pb::AnyValue::from_real(g.value()),
+                let g = match crate::cacher_guild::get_guild(&self.common_state.cache, id, flags) {
+                    Some(g) => pb::AnyValue::from_real(&g),
                     None => pb::AnyValue::from_real(&None::<CachedGuild>)
                 }?; 
 
                 Ok(tonic::Response::new(g))
             }
         }
-    }
-
-    async fn cached_guild_channels(&self, request: tonic::Request<pb::CachedGuildChannelsRequest>) -> Result<tonic::Response<pb::GuildChannelIds>, Status> {
-        let ccr = request.into_inner();
-        let Some(other) = ccr.auth else {
-            return Err(Status::unauthenticated(format!("No other found")));
-        };
-        other.validate().map_err(|e| Status::unauthenticated(format!("Validation failed: {}", e)))?;
-        let guild_id = Id::new_checked(ccr.guild_id)
-        .ok_or_else(|| Status::invalid_argument("Missing guild info in request"))?;
-
-        match self.common_state.cache.guild_channels(guild_id) {
-            Some(g) => {
-                let chans = Vec::from_iter(g.value().iter().map(|x| x.get()));
-                Ok(tonic::Response::new(pb::GuildChannelIds {
-                    found: true,
-                    channel_ids: chans,
-                }))
-            },
-            None => {
-                Ok(tonic::Response::new(pb::GuildChannelIds {
-                    found: false,
-                    channel_ids: vec![],
-                }))
-            }
-        }
-    }
-
-    async fn push_resource_to_cache(&self, request: tonic::Request<pb::PushResourceRequest>) -> Result<tonic::Response<pb::Empty>, Status> {
-        let ccr = request.into_inner();
-        let typ = ccr.r#type();
-        let Some(other) = ccr.auth else {
-            return Err(Status::unauthenticated(format!("No other found")));
-        };
-        other.validate().map_err(|e| Status::unauthenticated(format!("Validation failed: {}", e)))?;
-
-        let Some(payload) = ccr.value else {
-            return Err(Status::unauthenticated(format!("No payload found")));
-        };
-
-        match typ {
-            pb::ResourceType::RChannel => {
-                let chan = payload.to_real::<Channel>()?;
-                self.common_state.cache.update(&ChannelUpdate(chan))
-            }
-            pb::ResourceType::RGuild => {
-                let g = payload.to_real::<PartialGuild>()?;
-                self.common_state.cache.update(&GuildUpdate(g))
-            }
-        }
-
-        Ok(tonic::Response::new(pb::Empty {}))
     }
 }
 

@@ -33,6 +33,7 @@ tonic-prost = "0.14"
 prost = "0.14"
 prost-types = "0.14"
 tokio-stream = "0.1"
+bitflags = "2.11.0"
 
 [dependencies.tokio]
 version = "1"

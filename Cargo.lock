@@ -1415,6 +1415,7 @@ dependencies = [
 name = "stratum"
 version = "0.1.0"
 dependencies = [
+ "bitflags",
  "chrono",
  "dashmap",
  "env_logger",
