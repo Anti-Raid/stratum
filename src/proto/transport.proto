@@ -70,8 +70,6 @@ message GetResourceRequest {
     OtherAuthorized auth = 4;
 }
 
-message Empty {}
-
 // Stratum service (runs on stratum and called by template-worker)
 service Stratum {
     // EventStream is a bidirectional streaming RPC that allows the master to send Discord events to the worker
