@@ -397,6 +397,7 @@ async fn dispatcher(mut shard: Shard, mut shutdown: watch::Receiver<bool>, commo
             _ = ticker.tick() => {
                 let collected_data = CollectedShardData::from_shard(&shard);
                 sd.update(collected_data);
+                log::info!("Currently in {} servers", common_state.cache.stats().guilds())
             }
             Some(item) = shard.next() => {
                 let msg = match item {
@@ -440,7 +441,7 @@ fn dispatch_single(event_json: String, common_state: &CommonState) -> Result<(),
         return Err(format!("Received event with unknown type: {event_json}").into());
     };
 
-    log::info!("dispatch_single: {event_json}");
+    //log::info!("dispatch_single: {event_json}");
 
     let parsed_event: Option<Event> = match event {
         Some(event) => {
@@ -525,7 +526,6 @@ pub async fn server() -> Result<(), crate::Error> {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let client = Arc::new(Client::new(CONFIG.token.clone()));
     let config = Config::new(CONFIG.token.clone(), Intents::from_bits(CONFIG.intents).expect("Invalid intents in config"));
-    
     let shards = twilight_gateway::create_recommended(&client, config, |_, builder| builder.build())
         .await?;
     let common_state = CommonState::new(shards.len());

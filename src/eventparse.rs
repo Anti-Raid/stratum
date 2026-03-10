@@ -29,7 +29,7 @@ pub fn parse(
     let event_type_raw = gateway_deserializer.event_type();
 
     let Ok(event_type) = EventTypeFlags::try_from((opcode, event_type_raw)) else {
-        return Ok((None, None, opcode));
+        return Ok((None, event_type_raw.map(|x| x.to_string()), opcode));
     };
 
     if wanted_event_types.contains(event_type) {
@@ -40,6 +40,6 @@ pub fn parse(
             .deserialize(&mut json_deserializer)
             .map(Some)?, event_type_raw, opcode))
     } else {
-        Ok((None, None, opcode))
+        Ok((None, event_type_raw.map(|x| x.to_string()), opcode))
     }
 }
