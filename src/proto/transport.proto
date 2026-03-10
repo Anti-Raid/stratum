@@ -58,11 +58,6 @@ message Status {
     uint64 user_count = 3;
 }
 
-message CachedChannelRequest {
-    uint64 channel_id = 1;
-    OtherAuthorized auth = 2;
-}
-
 message CachedGuildChannelsRequest {
     uint64 guild_id = 1;
     OtherAuthorized auth = 2;
@@ -72,6 +67,25 @@ message GuildChannelIds {
     bool found = 1;
     repeated uint64 channel_ids = 2;
 }
+
+enum ResourceType {
+    R_CHANNEL = 0;
+    R_GUILD = 1;
+}
+
+message PushResourceRequest {
+    ResourceType type = 1;
+    AnyValue value = 2;
+    OtherAuthorized auth = 3;
+}
+
+message GetResourceRequest {
+    ResourceType type = 1;
+    uint64 id = 2;
+    OtherAuthorized auth = 3;
+}
+
+message Empty {}
 
 // Stratum service (runs on stratum and called by template-worker)
 service Stratum {
@@ -83,9 +97,12 @@ service Stratum {
 
     // CachedChannel returns the cached channel data or null
     //
-    // @returns Channel?
-    rpc CachedChannel(CachedChannelRequest) returns (AnyValue);
+    // @returns <resource>?
+    rpc GetResourceFromCache(GetResourceRequest) returns (AnyValue);
 
     // CachedGuildChannel returns the channel ids of a guild
     rpc CachedGuildChannels(CachedGuildChannelsRequest) returns (GuildChannelIds);
+
+    // Push a resource into the cache to cache it manually into stratum
+    rpc PushResourceToCache(PushResourceRequest) returns (Empty);
 }

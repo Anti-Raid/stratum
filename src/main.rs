@@ -4,7 +4,8 @@ mod eventparse;
 use std::{pin::Pin, sync::{Arc, RwLock}};
 use serde::Deserialize;
 use tokio::{signal, sync::watch, sync::mpsc};
-use twilight_model::{channel::Channel, id::{Id, marker::GuildMarker}};
+use twilight_cache_inmemory::model::CachedGuild;
+use twilight_model::{channel::Channel, gateway::payload::incoming::{ChannelUpdate, GuildUpdate}, guild::PartialGuild, id::{Id, marker::GuildMarker}};
 use std::io::Write;
 use twilight_gateway::{
     CloseFrame, Config, Event, EventTypeFlags, Intents, Message, Shard, ShardState
@@ -320,21 +321,38 @@ impl pb::stratum_server::Stratum for StratumServer {
         }))
     }
 
-    async fn cached_channel(&self, request: tonic::Request<pb::CachedChannelRequest>) -> Result<tonic::Response<pb::AnyValue>, Status> {
+    async fn get_resource_from_cache(&self, request: tonic::Request<pb::GetResourceRequest>) -> Result<tonic::Response<pb::AnyValue>, Status> {
         let ccr = request.into_inner();
+        let typ = ccr.r#type();
         let Some(other) = ccr.auth else {
             return Err(Status::unauthenticated(format!("No other found")));
         };
         other.validate().map_err(|e| Status::unauthenticated(format!("Validation failed: {}", e)))?;
-        let channel_id = Id::new_checked(ccr.channel_id)
-        .ok_or_else(|| Status::invalid_argument("Missing channel info in request"))?;
+        
+        match typ {
+            pb::ResourceType::RChannel => {
+                let id = Id::new_checked(ccr.id)
+                .ok_or_else(|| Status::invalid_argument("Missing channel info in request"))?;
 
-        let chan = match self.common_state.cache.channel(channel_id) {
-            Some(chan) => pb::AnyValue::from_real(chan.value()),
-            None => pb::AnyValue::from_real(&None::<Channel>)
-        }?;
+                let chan = match self.common_state.cache.channel(id) {
+                    Some(chan) => pb::AnyValue::from_real(chan.value()),
+                    None => pb::AnyValue::from_real(&None::<Channel>)
+                }?;
 
-        Ok(tonic::Response::new(chan))
+                Ok(tonic::Response::new(chan))
+            }
+            pb::ResourceType::RGuild => {
+                let id = Id::new_checked(ccr.id)
+                .ok_or_else(|| Status::invalid_argument("Missing channel info in request"))?;
+
+                let g = match self.common_state.cache.guild(id) {
+                    Some(g) => pb::AnyValue::from_real(g.value()),
+                    None => pb::AnyValue::from_real(&None::<CachedGuild>)
+                }?; 
+
+                Ok(tonic::Response::new(g))
+            }
+        }
     }
 
     async fn cached_guild_channels(&self, request: tonic::Request<pb::CachedGuildChannelsRequest>) -> Result<tonic::Response<pb::GuildChannelIds>, Status> {
@@ -361,6 +379,32 @@ impl pb::stratum_server::Stratum for StratumServer {
                 }))
             }
         }
+    }
+
+    async fn push_resource_to_cache(&self, request: tonic::Request<pb::PushResourceRequest>) -> Result<tonic::Response<pb::Empty>, Status> {
+        let ccr = request.into_inner();
+        let typ = ccr.r#type();
+        let Some(other) = ccr.auth else {
+            return Err(Status::unauthenticated(format!("No other found")));
+        };
+        other.validate().map_err(|e| Status::unauthenticated(format!("Validation failed: {}", e)))?;
+
+        let Some(payload) = ccr.value else {
+            return Err(Status::unauthenticated(format!("No payload found")));
+        };
+
+        match typ {
+            pb::ResourceType::RChannel => {
+                let chan = payload.to_real::<Channel>()?;
+                self.common_state.cache.update(&ChannelUpdate(chan))
+            }
+            pb::ResourceType::RGuild => {
+                let g = payload.to_real::<PartialGuild>()?;
+                self.common_state.cache.update(&GuildUpdate(g))
+            }
+        }
+
+        Ok(tonic::Response::new(pb::Empty {}))
     }
 }
 
