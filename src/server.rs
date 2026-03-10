@@ -170,12 +170,14 @@ impl WorkerSet {
 /// Shard data struct, which holds the cache for a shard and other relevant data that might be needed globally by Stratum
 pub struct ShardData {
     collected_data: RwLock<Option<CollectedShardData>>,
+    ready: Ready,
 }
 
 impl ShardData {
-    pub fn new() -> Self {
+    pub fn new(shard_id: usize) -> Self {
         Self {
             collected_data: RwLock::new(None),
+            ready: Ready::new(shard_id)
         }
     }
 
@@ -194,8 +196,8 @@ pub struct ShardDataSet {
 impl ShardDataSet {
     pub fn new(num_shards: usize) -> Self {
         let mut shard_data = Vec::with_capacity(num_shards);
-        for _ in 0..num_shards {
-            shard_data.push(Arc::new(ShardData::new()));
+        for shard_id in 0..num_shards {
+            shard_data.push(Arc::new(ShardData::new(shard_id)));
         }
         Self { shard_data }
     }
@@ -219,6 +221,49 @@ impl CollectedShardData {
             latency: shard.latency().average(),
             state: shard.state(),
         }
+    }
+}
+
+#[derive(Clone)]
+#[allow(dead_code)]
+struct Ready {
+    is_ready_tx: watch::Sender<bool>,
+    is_ready_rx: watch::Receiver<bool>,
+    shard_id: usize,
+}
+
+#[allow(dead_code)]
+impl Ready {
+    fn new(shard_id: usize) -> Self {
+        let (tx, rx) = watch::channel(false);
+        Self {
+            is_ready_tx: tx,
+            is_ready_rx: rx,
+            shard_id
+        }
+    }
+
+    fn mark_ready(&self) {
+        log::info!("Shard {} is now ready!", self.shard_id);
+        self.is_ready_tx.send_replace(true);
+    }
+
+    fn mark_not_ready(&self) {
+        self.is_ready_tx.send_replace(false);
+    }
+
+    async fn wait_until_ready(&self) -> Result<(), crate::Error> {
+        if self.is_ready(){ 
+            return Ok(()) 
+        }
+
+        let mut rx = self.is_ready_tx.subscribe();
+        rx.wait_for(|x| *x).await?;
+        Ok(())
+    }
+
+    fn is_ready(&self) -> bool {
+        *self.is_ready_rx.borrow()
     }
 }
 
@@ -398,7 +443,6 @@ async fn dispatcher(mut shard: Shard, mut shutdown: watch::Receiver<bool>, commo
             _ = ticker.tick() => {
                 let collected_data = CollectedShardData::from_shard(&shard);
                 sd.update(collected_data);
-                log::info!("Currently in {} servers", common_state.cache.stats().guilds())
             }
             Some(item) = shard.next() => {
                 let msg = match item {
@@ -412,6 +456,7 @@ async fn dispatcher(mut shard: Shard, mut shutdown: watch::Receiver<bool>, commo
                 let json_str = match msg {
                     Message::Close(frame) => {
                         log::warn!("Shard with ID: {} received close frame: {:?}", shard.id(), frame);
+                        sd.ready.mark_not_ready();
                         if *shutdown.borrow() {
                             log::info!("Shard with ID: {} is shutting down gracefully", shard.id());
                             break;
@@ -421,7 +466,7 @@ async fn dispatcher(mut shard: Shard, mut shutdown: watch::Receiver<bool>, commo
                     Message::Text(json_str) => json_str
                 };
 
-                if let Err(e) = dispatch_single(json_str, &common_state) {
+                if let Err(e) = dispatch_single(json_str, &common_state, &sd) {
                     log::warn!("dispatch_single on shard {} failed: {e}", shard.id());
                 }
             }
@@ -430,7 +475,7 @@ async fn dispatcher(mut shard: Shard, mut shutdown: watch::Receiver<bool>, commo
 }
 
 /// Helper method to actually perform the event dispatch + cache update
-fn dispatch_single(event_json: String, common_state: &CommonState) -> Result<(), crate::Error> {
+fn dispatch_single(event_json: String, common_state: &CommonState, sd: &ShardData) -> Result<(), crate::Error> {
     let (event, event_name, opcode) = crate::eventparse::parse(&event_json, EventTypeFlags::all())?;
     
     if opcode != OpCode::Dispatch {
@@ -441,6 +486,10 @@ fn dispatch_single(event_json: String, common_state: &CommonState) -> Result<(),
     let Some(event_name) = event_name else {
         return Err(format!("Received event with unknown type: {event_json}").into());
     };
+
+    if event_name == "READY" || event_name == "RESUMED" {
+        sd.ready.mark_ready();
+    }
 
     //log::info!("dispatch_single: {event_json}");
 
@@ -548,6 +597,29 @@ pub async fn server() -> Result<(), crate::Error> {
     let mut tasks = shards
         .map(|shard| tokio::spawn(dispatcher(shard, shutdown_rx.clone(), common_state.clone())))
         .collect::<Vec<_>>();
+
+    // Push server count printer task
+    let common_state_ref = common_state.clone();
+    let mut shutdown_rx_ref = shutdown_rx.clone();
+    tasks.push(tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(30));
+        loop {
+            tokio::select! {
+                _ = shutdown_rx_ref.changed() => break,
+                _ = ticker.tick() => {
+                    let mut ready = 0;
+                    let total = common_state_ref.shards.shard_data.len();
+                    for shard in common_state_ref.shards.shard_data.iter() {
+                        if shard.ready.is_ready() {
+                            ready+=1;
+                        }
+                    }
+
+                    log::info!("Currently in {} servers with {ready}/{total} shards up", common_state_ref.cache.stats().guilds());
+                }
+            }
+        }
+    }));
 
     // Push grpc server to the very end
     tasks.push(tokio::spawn(async move {
