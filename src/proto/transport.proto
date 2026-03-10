@@ -29,8 +29,35 @@ message Worker {
     string grpc_access_key = 2;
 }
 
+message OtherAuthorized {
+    string grpc_access_key = 2;
+}
+
+enum ShardState {
+    ACTIVE = 0;
+    DISCONNECTED = 1;
+    FATALLY_CLOSED = 2;
+    IDENTIFYING = 3;
+    RESUMING = 4;
+}
+
+message ShardStatus {
+    uint32 shard_id = 1;
+    uint64 guild_count = 2;
+    uint64 user_count = 3;
+    double latency = 4;
+    ShardState state = 5;
+}
+
+message Status {
+    repeated ShardStatus shards = 1;
+}
+
 // Stratum service (runs on stratum and called by template-worker)
 service Stratum {
     // EventStream is a bidirectional streaming RPC that allows the master to send Discord events to the worker
     rpc EventStream(Worker) returns (stream DiscordEvent);
+
+    // GetStatus returns the current status of shards in Stratum
+    rpc GetStatus(OtherAuthorized) returns (Status);
 }

@@ -7,7 +7,7 @@ use tokio::{signal, sync::watch, sync::mpsc};
 use twilight_model::id::{Id, marker::GuildMarker};
 use std::io::Write;
 use twilight_gateway::{
-    CloseFrame, Config, Event, EventTypeFlags, Intents, Message, Shard
+    CloseFrame, Config, Event, EventTypeFlags, Intents, Message, Shard, ShardState
 };
 use twilight_http::Client;
 use futures_util::{Stream, StreamExt};
@@ -43,6 +43,16 @@ impl pb::Worker {
             return Err("Invalid gRPC access key".into());
         }
 
+        Ok(())
+    }
+}
+
+// Validates other authorized requests
+impl pb::OtherAuthorized {
+    pub fn validate(&self) -> Result<(), crate::Error> {
+        if self.grpc_access_key != config::CONFIG.grpc_access_key {
+            return Err("Invalid gRPC access key".into());
+        }   
         Ok(())
     }
 }
@@ -119,21 +129,80 @@ impl WorkerSet {
     }
 }
 
-#[derive(Clone)]
-pub struct CommonState {
-    pub cache: Arc<twilight_cache_inmemory::InMemoryCache>,
-    pub workers: Arc<WorkerSet>,
+/// Shard data struct, which holds the cache for a shard and other relevant data that might be needed globally by Stratum
+pub struct ShardData {
+    cache: Arc<twilight_cache_inmemory::InMemoryCache>,
+    collected_data: RwLock<Option<CollectedShardData>>,
 }
 
-impl CommonState {
+impl ShardData {
     pub fn new() -> Self {
         let cache = twilight_cache_inmemory::DefaultInMemoryCache::builder()
         .message_cache_size(100)
         .build();
-        let worker_set = WorkerSet::new(config::CONFIG.num_workers);
+
         Self {
             cache: Arc::new(cache),
+            collected_data: RwLock::new(None),
+        }
+    }
+
+    /// Updates the collected shard data for the shard, which is used for statistics and other global data needs
+    pub fn update(&self, collected_data: CollectedShardData) {
+        let mut data = self.collected_data.write().unwrap();
+        *data = Some(collected_data);
+    }
+}
+
+/// A set of shard data, sharded by shard ID
+pub struct ShardDataSet {
+    shard_data: Vec<Arc<ShardData>>,
+}
+
+impl ShardDataSet {
+    pub fn new(num_shards: usize) -> Self {
+        let mut shard_data = Vec::with_capacity(num_shards);
+        for _ in 0..num_shards {
+            shard_data.push(Arc::new(ShardData::new()));
+        }
+        Self { shard_data }
+    }
+
+    pub fn get_shard_data(&self, shard_id: u32) -> Arc<ShardData> {
+        Arc::clone(&self.shard_data[shard_id as usize])
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct CollectedShardData {
+    pub shard_id: u32,
+    pub latency: Option<std::time::Duration>,
+    pub state: ShardState,
+}
+
+impl CollectedShardData {
+    pub fn from_shard(shard: &Shard) -> Self {
+        Self {
+            shard_id: shard.id().number(),
+            latency: shard.latency().average(),
+            state: shard.state(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct CommonState {
+    pub workers: Arc<WorkerSet>,
+    pub shards: Arc<ShardDataSet>,
+}
+
+impl CommonState {
+    pub fn new(num_shards: usize) -> Self {
+        let worker_set = WorkerSet::new(config::CONFIG.num_workers);
+        let shard_data_set = ShardDataSet::new(num_shards);
+        Self {
             workers: Arc::new(worker_set),
+            shards: Arc::new(shard_data_set),
         }
     }
 }
@@ -174,58 +243,62 @@ impl pb::stratum_server::Stratum for StratumServer {
         let rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
         Ok(tonic::Response::new(Box::pin(rx) as Self::EventStreamStream))
     }
-}
 
-#[tokio::main]
-async fn main() -> Result<(), Error> {
-    let mut env_builder = env_logger::builder();
+    async fn get_status(&self, request: tonic::Request<pb::OtherAuthorized>) -> Result<tonic::Response<pb::Status>, Status> {
+        let other = request.into_inner();
+        other.validate().map_err(|e| Status::unauthenticated(format!("Validation failed: {}", e)))?;
+        let mut shards = Vec::with_capacity(self.common_state.shards.shard_data.len());
 
-    env_builder
-        .format(move |buf, record| {
-            writeln!(
-                buf,
-                "({}) {} - {}",
-                record.target(),
-                record.level(),
-                record.args()
-            )
-        })
-        .filter(None, log::LevelFilter::Info);
+        for shard_data in self.common_state.shards.shard_data.iter() {
+            let collected_data = {
+                let data = shard_data.collected_data.read().unwrap();
+                *data
+            };
 
-    env_builder.init();
+            let Some(collected_data) = collected_data else {
+                continue; // if we don't have collected data for the shard, skip it in the status response
+            };
 
-    // Deref config to trigger loading it before starting up the proxy service
-    let _ = &*config::CONFIG;
+            shards.push(pb::ShardStatus {
+                shard_id: collected_data.shard_id,
+                latency: collected_data.latency.map(|d| {
+                    // Convert latency to milliseconds as a float (copy pasted from currently unstable as_millis_f64)
+                    const MILLIS_PER_SEC: u64 = 1_000;
+                    const NANOS_PER_MILLI: u32 = 1_000_000;
+                    (d.as_secs() as f64) * (MILLIS_PER_SEC as f64)
+                    + (d.subsec_nanos() as f64) / (NANOS_PER_MILLI as f64)
+                }).unwrap_or(-1.0) as f64,
+                state: match collected_data.state {
+                    ShardState::Resuming => pb::ShardState::Resuming as i32,
+                    ShardState::Identifying => pb::ShardState::Identifying as i32,
+                    ShardState::FatallyClosed => pb::ShardState::FatallyClosed as i32,
+                    ShardState::Disconnected { reconnect_attempts: _ } => pb::ShardState::Disconnected as i32,
+                    ShardState::Active => pb::ShardState::Active as i32,
+                },
+                guild_count: shard_data.cache.stats().guilds().try_into().map_err(|_| Status::internal("Guild count exceeds u64 max"))?,
+                user_count: shard_data.cache.stats().users().try_into().map_err(|_| Status::internal("User count exceeds u64 max"))?,
+            });
+        }
 
-    // Select rustls backend
-    rustls::crypto::aws_lc_rs::default_provider().install_default().unwrap();
-
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let client = Arc::new(Client::new(config::CONFIG.token.clone()));
-    let config = Config::new(config::CONFIG.token.clone(), Intents::from_bits(config::CONFIG.intents).expect("Invalid intents in config"));
-    let common_state = CommonState::new();
-
-    let tasks = twilight_gateway::create_recommended(&client, config, |_, builder| builder.build())
-        .await?
-        .map(|shard| tokio::spawn(dispatcher(shard, shutdown_rx.clone(), common_state.clone())))
-        .collect::<Vec<_>>();
-
-    signal::ctrl_c().await?;
-    _ = shutdown_tx.send(true);
-
-    for task in tasks {
-        _ = task.await;
+        Ok(tonic::Response::new(pb::Status {
+            shards
+        }))
     }
-
-    Ok(())
 }
 
 // Core dispatch loop
 async fn dispatcher(mut shard: Shard, mut shutdown: watch::Receiver<bool>, common_state: CommonState) {
     log::info!("Starting shard with ID: {}", shard.id());
+    let sd = common_state.shards.get_shard_data(shard.id().number());
+    let cache = sd.cache.clone();
+    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
     loop {
         tokio::select! {
             _ = shutdown.changed() => shard.close(CloseFrame::NORMAL),
+            _ = ticker.tick() => {
+                let collected_data = CollectedShardData::from_shard(&shard);
+                sd.update(collected_data);
+            }
             Some(item) = shard.next() => {
                 let msg = match item {
                     Ok(msg) => msg,
@@ -266,7 +339,7 @@ async fn dispatcher(mut shard: Shard, mut shutdown: watch::Receiver<bool>, commo
                         // Try to convert to concrete event type
                         match event.try_into() {
                             Ok(event) => {
-                                common_state.cache.update(&event);
+                                cache.update(&event);
                                 Some(event)
                             },
                             Err(e) => {
@@ -277,6 +350,11 @@ async fn dispatcher(mut shard: Shard, mut shutdown: watch::Receiver<bool>, commo
                     },
                     None => None, // unknown event, use wildcard parsing
                 };
+
+                if is_internal_event(&event_name) {
+                    // Don't send internal events to workers
+                    continue;
+                }
 
                 let Some(guild_id) = deduce_guild_id(&json_str, &parsed_event) else {
                     // ignore events we can't deduce a guild_id for, since we won't know which tenant to route them to
@@ -327,4 +405,60 @@ fn deduce_guild_id(raw_json: &str, parsed_event: &Option<Event>) -> Option<Id<Gu
 
     // If we can't find a guild_id, return None and ignore the event, since we won't know which tenant to route it to
     None
+}
+
+/// Returns true if the event is an internal event that should not be sent to workers, false otherwise
+fn is_internal_event(event_name: &str) -> bool {
+    [
+        "READY", 
+        "RESUMED", 
+        "GUILD_CREATE", 
+        "GUILD_DELETE",
+        "RATE_LIMITED", 
+    ].contains(&event_name)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Error> {
+    let mut env_builder = env_logger::builder();
+
+    env_builder
+        .format(move |buf, record| {
+            writeln!(
+                buf,
+                "({}) {} - {}",
+                record.target(),
+                record.level(),
+                record.args()
+            )
+        })
+        .filter(None, log::LevelFilter::Info);
+
+    env_builder.init();
+
+    // Deref config to trigger loading it before starting up the proxy service
+    let _ = &*config::CONFIG;
+
+    // Select rustls backend
+    rustls::crypto::aws_lc_rs::default_provider().install_default().unwrap();
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let client = Arc::new(Client::new(config::CONFIG.token.clone()));
+    let config = Config::new(config::CONFIG.token.clone(), Intents::from_bits(config::CONFIG.intents).expect("Invalid intents in config"));
+    
+    let shards = twilight_gateway::create_recommended(&client, config, |_, builder| builder.build())
+        .await?;
+    let common_state = CommonState::new(shards.len());
+    let tasks = shards
+        .map(|shard| tokio::spawn(dispatcher(shard, shutdown_rx.clone(), common_state.clone())))
+        .collect::<Vec<_>>();
+
+    signal::ctrl_c().await?;
+    _ = shutdown_tx.send(true);
+
+    for task in tasks {
+        _ = task.await;
+    }
+
+    Ok(())
 }
