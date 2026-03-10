@@ -2,7 +2,7 @@ use std::{pin::Pin, sync::{Arc, RwLock}, time::Duration};
 use serde::Deserialize;
 use tokio::{signal, sync::watch, sync::mpsc};
 use twilight_cache_inmemory::model::CachedGuild;
-use twilight_model::{channel::Channel, id::{Id, marker::GuildMarker}};
+use twilight_model::{channel::Channel, gateway::OpCode, id::{Id, marker::GuildMarker}};
 use twilight_gateway::{
     CloseFrame, Config, Event, EventTypeFlags, Intents, Message, Shard, ShardState
 };
@@ -12,7 +12,7 @@ use tonic::Status;
 use crate::config::CONFIG;
 
 /// Internal transport layer
-mod pb {
+pub(crate) mod pb {
     tonic::include_proto!("stratum");
 }
 
@@ -261,7 +261,7 @@ impl StratumServer {
         let svc = pb::stratum_server::StratumServer::new(self.clone());
         log::info!("Starting gRPC server on {}", addr);
         tonic::transport::Server::builder()
-            .max_frame_size(Some(1024 * 1024 * 16)) // 16MB
+            .max_frame_size(Some(1024 * 1024 * 16 - 10)) // 16MB
             .add_service(svc)
             .serve_with_shutdown(addr, async {
                 // Wait for the shutdown signal
@@ -376,6 +376,14 @@ impl pb::stratum_server::Stratum for StratumServer {
             }
         }
     }
+
+    async fn get_config(&self, request: tonic::Request<pb::OtherAuthorized>) -> Result<tonic::Response<pb::StratumConfig>, Status> {
+        let other = request.into_inner();
+        other.validate().map_err(|e| Status::unauthenticated(format!("Validation failed: {}", e)))?;
+        Ok(tonic::Response::new(pb::StratumConfig { 
+            num_workers: CONFIG.num_workers.try_into().map_err(|e| Status::internal(format!("Config fetch failed: {}", e)))?
+        }))
+    }
 }
 
 // Core dispatch loop
@@ -421,10 +429,18 @@ async fn dispatcher(mut shard: Shard, mut shutdown: watch::Receiver<bool>, commo
 
 /// Helper method to actually perform the event dispatch + cache update
 fn dispatch_single(event_json: String, common_state: &CommonState) -> Result<(), crate::Error> {
-    let (event, event_name) = crate::eventparse::parse(&event_json, EventTypeFlags::all())?;
+    let (event, event_name, opcode) = crate::eventparse::parse(&event_json, EventTypeFlags::all())?;
+    
+    if opcode != OpCode::Dispatch {
+        log::info!("Ignoring msg with opcode: {opcode:?}");
+        return Ok(()); // Ignore non-dispatch messages
+    }
+    
     let Some(event_name) = event_name else {
-        return Err("Received event with unknown type".into());
+        return Err(format!("Received event with unknown type: {event_json}").into());
     };
+
+    log::info!("dispatch_single: {event_json}");
 
     let parsed_event: Option<Event> = match event {
         Some(event) => {
@@ -444,6 +460,7 @@ fn dispatch_single(event_json: String, common_state: &CommonState) -> Result<(),
         // ignore events we can't deduce a guild_id for, since we won't know which tenant to route them to
         //
         // TODO: Change this when we support user-installed apps in stratum
+        log::info!("Ignoring msg with no known guild id: {event_json}");
         return Ok(()); 
     };
 
@@ -522,9 +539,16 @@ pub async fn server() -> Result<(), crate::Error> {
         loop {
             let shutdown = shutdown_rx.clone();
             if let Err(e) = srv.start(shutdown).await {
+                if *shutdown_rx.borrow() {
+                    break;
+                }
                 log::error!("gRPC server shut down unexpectedly: {e:?}, restarting");
                 tokio::time::sleep(Duration::from_secs(5)).await;
                 continue;
+            }
+
+            if *shutdown_rx.borrow() {
+                break;
             }
         }
     }));
@@ -533,7 +557,10 @@ pub async fn server() -> Result<(), crate::Error> {
     _ = shutdown_tx.send(true);
 
     for task in tasks {
-        _ = task.await;
+        tokio::select! {
+            _ = task => {},
+            _ = signal::ctrl_c() => {}
+        };
     }
 
     Ok(())

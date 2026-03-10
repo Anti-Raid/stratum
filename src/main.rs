@@ -1,10 +1,12 @@
 mod config;
 mod eventparse;
 mod server;
+mod test_client;
 
 // special cachers
 mod cacher_guild;
 
+use std::env::args;
 use std::io::Write;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>; // This is constant and should be copy pasted
@@ -29,6 +31,16 @@ async fn main() -> Result<(), Error> {
 
     // Deref config to trigger loading it before starting up the proxy service
     let _ = &*config::CONFIG;
+    let mut args = args();
     
-    server::server().await
+    match args.len() {
+        1 => server::server().await,
+        2 => {
+            match args.nth(1).expect("Failed to get second arg").as_str() {
+                "test_client" => test_client::client().await,
+                _ => Err("Usage: stratum [test_client]. (could not recognize second arg)".into())
+            }
+        }
+        _ => Err("Usage: stratum [test_client]".into())
+    }
 }

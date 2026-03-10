@@ -17,19 +17,19 @@ use twilight_model::gateway::{
 pub fn parse(
     event: &str,
     wanted_event_types: EventTypeFlags,
-) -> Result<(Option<GatewayEvent>, Option<String>), crate::Error> {
+) -> Result<(Option<GatewayEvent>, Option<String>, OpCode), crate::Error> {
     let Some(gateway_deserializer) = GatewayEventDeserializer::from_json(event) else {
         return Err(format!("Failed to parse event: {}", event).into());
     };
 
     let Some(opcode) = OpCode::from(gateway_deserializer.op()) else {
-        return Ok((None, None));
+        return Ok((None, None, OpCode::Identify));
     };
 
     let event_type_raw = gateway_deserializer.event_type();
 
     let Ok(event_type) = EventTypeFlags::try_from((opcode, event_type_raw)) else {
-        return Ok((None, None));
+        return Ok((None, None, opcode));
     };
 
     if wanted_event_types.contains(event_type) {
@@ -38,8 +38,8 @@ pub fn parse(
 
         Ok((gateway_deserializer
             .deserialize(&mut json_deserializer)
-            .map(Some)?, event_type_raw))
+            .map(Some)?, event_type_raw, opcode))
     } else {
-        Ok((None, None))
+        Ok((None, None, opcode))
     }
 }
