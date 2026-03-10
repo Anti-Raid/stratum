@@ -153,7 +153,7 @@ impl WorkerSet {
     }
 
     /// Returns the worker for the given tenant ID
-    pub fn get_worker(&self, id: TenantId) -> Arc<Worker> {
+    pub fn get_worker_for_tenant(&self, id: TenantId) -> Arc<Worker> {
         let worker_id = id.worker_id(self.workers.len());
         self.get_worker_by_id(worker_id)
     }
@@ -487,7 +487,7 @@ fn dispatch_single(event_json: String, common_state: &CommonState) -> Result<(),
     };
 
     let tenant_id = TenantId::Guild(guild_id);
-    let worker = common_state.workers.get_worker(tenant_id);
+    let worker = common_state.workers.get_worker_for_tenant(tenant_id);
     worker.send_event(pb::DiscordEvent {
         event_name,
         payload: event_json,
