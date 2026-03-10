@@ -2,6 +2,11 @@ syntax = "proto3";
 
 package stratum;
 
+message AnyValue {
+    // msgpack encoded response
+    bytes data = 1;
+}
+
 enum TenantType {
   USER = 0;
   GUILD = 1;
@@ -43,14 +48,29 @@ enum ShardState {
 
 message ShardStatus {
     uint32 shard_id = 1;
-    uint64 guild_count = 2;
-    uint64 user_count = 3;
     double latency = 4;
     ShardState state = 5;
 }
 
 message Status {
     repeated ShardStatus shards = 1;
+    uint64 guild_count = 2;
+    uint64 user_count = 3;
+}
+
+message CachedChannelRequest {
+    uint64 channel_id = 1;
+    OtherAuthorized auth = 2;
+}
+
+message CachedGuildChannelsRequest {
+    uint64 guild_id = 1;
+    OtherAuthorized auth = 2;
+}
+
+message GuildChannelIds {
+    bool found = 1;
+    repeated uint64 channel_ids = 2;
 }
 
 // Stratum service (runs on stratum and called by template-worker)
@@ -60,4 +80,12 @@ service Stratum {
 
     // GetStatus returns the current status of shards in Stratum
     rpc GetStatus(OtherAuthorized) returns (Status);
+
+    // CachedChannel returns the cached channel data or null
+    //
+    // @returns Channel?
+    rpc CachedChannel(CachedChannelRequest) returns (AnyValue);
+
+    // CachedGuildChannel returns the channel ids of a guild
+    rpc CachedGuildChannels(CachedGuildChannelsRequest) returns (GuildChannelIds);
 }

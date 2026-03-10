@@ -4,7 +4,7 @@ mod eventparse;
 use std::{pin::Pin, sync::{Arc, RwLock}};
 use serde::Deserialize;
 use tokio::{signal, sync::watch, sync::mpsc};
-use twilight_model::id::{Id, marker::GuildMarker};
+use twilight_model::{channel::Channel, id::{Id, marker::GuildMarker}};
 use std::io::Write;
 use twilight_gateway::{
     CloseFrame, Config, Event, EventTypeFlags, Intents, Message, Shard, ShardState
@@ -18,6 +18,40 @@ pub type Error = Box<dyn std::error::Error + Send + Sync>; // This is constant a
 /// Internal transport layer
 mod pb {
     tonic::include_proto!("stratum");
+}
+
+fn encode_any<T: serde::Serialize>(msg: &T) -> Result<Vec<u8>, crate::Error> {
+    let bytes = rmp_serde::encode::to_vec(msg)
+        .map_err(|e| format!("Failed to serialize Mesophyll any: {}", e))?;
+    Ok(bytes)
+}
+
+fn decode_any<T: for<'de> serde::Deserialize<'de>>(msg: &[u8]) -> Result<T, crate::Error> {
+    let decoded: T = rmp_serde::from_slice(msg)
+        .map_err(|e| format!("Failed to deserialize Mesophyll any: {}", e))?;
+    Ok(decoded)
+}
+
+impl pb::AnyValue {
+    pub fn from_real<T: serde::Serialize>(value: &T) -> Result<Self, Status> {
+        Self::from_real_exec(value).map_err(|e| Status::internal(e.to_string()))
+    }
+
+    pub fn from_real_exec<T: serde::Serialize>(value: &T) -> Result<Self, crate::Error> {
+        let data = encode_any(value)
+            .map_err(|e| format!("Failed to encode response value: {}", e))?;
+        Ok(Self { data })
+    }
+
+    pub fn to_real<T: for<'de> serde::Deserialize<'de>>(&self) -> Result<T, Status> {
+        self.to_real_exec().map_err(|e| Status::internal(e.to_string()))
+    }
+
+    pub fn to_real_exec<T: for<'de> serde::Deserialize<'de>>(&self) -> Result<T, crate::Error> {
+        let val = decode_any(&self.data)
+            .map_err(|e| format!("Failed to decode request value: {}", e))?;
+        Ok(val)
+    }
 }
 
 impl pb::Id {
@@ -131,18 +165,12 @@ impl WorkerSet {
 
 /// Shard data struct, which holds the cache for a shard and other relevant data that might be needed globally by Stratum
 pub struct ShardData {
-    cache: Arc<twilight_cache_inmemory::InMemoryCache>,
     collected_data: RwLock<Option<CollectedShardData>>,
 }
 
 impl ShardData {
     pub fn new() -> Self {
-        let cache = twilight_cache_inmemory::DefaultInMemoryCache::builder()
-        .message_cache_size(100)
-        .build();
-
         Self {
-            cache: Arc::new(cache),
             collected_data: RwLock::new(None),
         }
     }
@@ -194,15 +222,22 @@ impl CollectedShardData {
 pub struct CommonState {
     pub workers: Arc<WorkerSet>,
     pub shards: Arc<ShardDataSet>,
+    pub cache: Arc<twilight_cache_inmemory::InMemoryCache>,
 }
 
 impl CommonState {
     pub fn new(num_shards: usize) -> Self {
         let worker_set = WorkerSet::new(config::CONFIG.num_workers);
         let shard_data_set = ShardDataSet::new(num_shards);
+
+        let cache = twilight_cache_inmemory::DefaultInMemoryCache::builder()
+        .message_cache_size(100)
+        .build();
+
         Self {
             workers: Arc::new(worker_set),
             shards: Arc::new(shard_data_set),
+            cache: Arc::new(cache)
         }
     }
 }
@@ -275,14 +310,57 @@ impl pb::stratum_server::Stratum for StratumServer {
                     ShardState::Disconnected { reconnect_attempts: _ } => pb::ShardState::Disconnected as i32,
                     ShardState::Active => pb::ShardState::Active as i32,
                 },
-                guild_count: shard_data.cache.stats().guilds().try_into().map_err(|_| Status::internal("Guild count exceeds u64 max"))?,
-                user_count: shard_data.cache.stats().users().try_into().map_err(|_| Status::internal("User count exceeds u64 max"))?,
             });
         }
 
         Ok(tonic::Response::new(pb::Status {
-            shards
+            shards,
+            guild_count: self.common_state.cache.stats().guilds().try_into().map_err(|_| Status::internal("Guild count exceeds u64 max"))?,
+            user_count: self.common_state.cache.stats().users().try_into().map_err(|_| Status::internal("User count exceeds u64 max"))?,
         }))
+    }
+
+    async fn cached_channel(&self, request: tonic::Request<pb::CachedChannelRequest>) -> Result<tonic::Response<pb::AnyValue>, Status> {
+        let ccr = request.into_inner();
+        let Some(other) = ccr.auth else {
+            return Err(Status::unauthenticated(format!("No other found")));
+        };
+        other.validate().map_err(|e| Status::unauthenticated(format!("Validation failed: {}", e)))?;
+        let channel_id = Id::new_checked(ccr.channel_id)
+        .ok_or_else(|| Status::invalid_argument("Missing channel info in request"))?;
+
+        let chan = match self.common_state.cache.channel(channel_id) {
+            Some(chan) => pb::AnyValue::from_real(chan.value()),
+            None => pb::AnyValue::from_real(&None::<Channel>)
+        }?;
+
+        Ok(tonic::Response::new(chan))
+    }
+
+    async fn cached_guild_channels(&self, request: tonic::Request<pb::CachedGuildChannelsRequest>) -> Result<tonic::Response<pb::GuildChannelIds>, Status> {
+        let ccr = request.into_inner();
+        let Some(other) = ccr.auth else {
+            return Err(Status::unauthenticated(format!("No other found")));
+        };
+        other.validate().map_err(|e| Status::unauthenticated(format!("Validation failed: {}", e)))?;
+        let guild_id = Id::new_checked(ccr.guild_id)
+        .ok_or_else(|| Status::invalid_argument("Missing guild info in request"))?;
+
+        match self.common_state.cache.guild_channels(guild_id) {
+            Some(g) => {
+                let chans = Vec::from_iter(g.value().iter().map(|x| x.get()));
+                Ok(tonic::Response::new(pb::GuildChannelIds {
+                    found: true,
+                    channel_ids: chans,
+                }))
+            },
+            None => {
+                Ok(tonic::Response::new(pb::GuildChannelIds {
+                    found: false,
+                    channel_ids: vec![],
+                }))
+            }
+        }
     }
 }
 
@@ -290,7 +368,7 @@ impl pb::stratum_server::Stratum for StratumServer {
 async fn dispatcher(mut shard: Shard, mut shutdown: watch::Receiver<bool>, common_state: CommonState) {
     log::info!("Starting shard with ID: {}", shard.id());
     let sd = common_state.shards.get_shard_data(shard.id().number());
-    let cache = sd.cache.clone();
+    let cache = common_state.cache.clone();
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
     loop {
         tokio::select! {
