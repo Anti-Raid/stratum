@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 # common
 stratum_common = { path = "../common" }
+stratum_client = { path = "../client" }
 
 # logging
 log = "0.4.29"

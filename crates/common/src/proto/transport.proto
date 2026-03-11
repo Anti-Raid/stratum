@@ -82,7 +82,7 @@ message ShardReadyUpdate {
 
 // Stratum service (runs on stratum and called by template-worker)
 service Stratum {
-    // EventStream is a bidirectional streaming RPC that allows the master to send Discord events to the worker
+    // EventStream is a streaming RPC that allows the master to send Discord events to the worker
     rpc EventStream(Worker) returns (stream DiscordEvent);
 
     // ShardReadyStream provides shard ready updates as shards become ready/non-ready

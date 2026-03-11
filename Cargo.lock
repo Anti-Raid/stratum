@@ -1464,6 +1464,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "stratum_client",
  "stratum_common",
  "tokio",
  "tokio-stream",
@@ -1473,6 +1474,18 @@ dependencies = [
  "twilight-gateway-queue",
  "twilight-http",
  "twilight-model",
+]
+
+[[package]]
+name = "stratum_client"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "futures-util",
+ "log",
+ "stratum_common",
+ "tokio",
+ "tonic",
 ]
 
 [[package]]
