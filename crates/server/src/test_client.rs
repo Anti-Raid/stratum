@@ -38,11 +38,24 @@ pub async fn client() -> Result<(), crate::Error> {
 }
 
 async fn client_stub_worker(client: Arc<stratum_client::StratumClient>, wid: u32, shutdown: watch::Receiver<bool>) {
-    let stream = client.event_stream(wid).await.expect("Failed to fetch event stream");
+    loop {
+        match client_stub_worker_impl(client.clone(), wid, shutdown.clone()).await {
+            Ok(_) => break,
+            Err(e) => {
+                log::error!("Error in stream {e:?}, retrying in 5 seconds");
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        }
+    }
+}
+
+async fn client_stub_worker_impl(client: Arc<stratum_client::StratumClient>, wid: u32, shutdown: watch::Receiver<bool>) -> Result<(), crate::Error> {
+    let stream = client.event_stream(wid).await?;
     log::info!("Started event stream");
     client.listen_to_stream(stream, Some(shutdown), |evt| {
         let value = serde_json::from_str::<serde_json::Value>(&evt.payload);
         log::info!("Got event: {} json_ok({})", evt.event_name, value.is_ok());
         false
-    }).await.expect("listen to stream ended with an error");
+    }).await?;
+    Ok(())
 }
