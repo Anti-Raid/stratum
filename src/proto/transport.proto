@@ -74,10 +74,19 @@ message StratumConfig {
     uint32 num_workers = 1;
 }
 
+message ShardReadyUpdate {
+  // A simple list of shard IDs that are currently ready
+  repeated uint32 ready_shards = 1;
+  uint32 total_shards = 2;
+}
+
 // Stratum service (runs on stratum and called by template-worker)
 service Stratum {
     // EventStream is a bidirectional streaming RPC that allows the master to send Discord events to the worker
     rpc EventStream(Worker) returns (stream DiscordEvent);
+
+    // ShardReadyStream provides shard ready updates as shards become ready/non-ready
+    rpc ShardReadyStream(OtherAuthorized) returns (stream ShardReadyUpdate);
 
     // GetStatus returns the current status of shards in Stratum
     rpc GetStatus(OtherAuthorized) returns (Status);

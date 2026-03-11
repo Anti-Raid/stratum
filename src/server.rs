@@ -1,4 +1,4 @@
-use std::{pin::Pin, sync::{Arc, RwLock}, time::Duration};
+use std::{collections::HashMap, pin::Pin, sync::{Arc, RwLock, atomic::{AtomicU64, Ordering}}, time::Duration};
 use serde::Deserialize;
 use tokio::{signal, sync::watch, sync::mpsc};
 use twilight_cache_inmemory::model::CachedGuild;
@@ -109,30 +109,45 @@ impl TenantId {
 
 /// Worker struct that holds all the connections for a given shard and handles sending events to them
 pub struct Worker {
-    conn_txs: RwLock<Vec<mpsc::UnboundedSender<Result<pb::DiscordEvent, Status>>>>,
+    conn_txs: Arc<RwLock<HashMap<u64, mpsc::UnboundedSender<Result<pb::DiscordEvent, Status>>>>>,
+    id: AtomicU64,
 }
 
 impl Worker {
     pub fn new() -> Self {
         Self {
-            conn_txs: RwLock::new(Vec::new()),
+            conn_txs: Arc::new(RwLock::new(HashMap::new())),
+            id: AtomicU64::new(0),
         }
     }
 
     pub fn add_connection(&self, tx: mpsc::UnboundedSender<Result<pb::DiscordEvent, Status>>) {
-        let mut conn_txs = self.conn_txs.write().unwrap();
-        conn_txs.push(tx);
-    }
+        let next_id = self.id.fetch_add(1, Ordering::SeqCst);
+        {
+            let mut conn_txs = self.conn_txs.write().unwrap();
+            conn_txs.insert(next_id, tx.clone());
+        }
 
+        let conn_txs = self.conn_txs.clone();
+        tokio::spawn(async move {
+            tx.closed().await;
+
+            {
+                let mut conn_txs = conn_txs.write().unwrap();
+                conn_txs.remove(&next_id);
+            }
+        });
+    }
+    
     pub fn send_event(&self, event: pb::DiscordEvent) {
         let conn_txs = self.conn_txs.read().unwrap();
         match conn_txs.len() {
             0 => return, // no connections, drop the event
             1 => {
-                let _ = conn_txs[0].send(Ok(event)); // only one connection, send directly without needing to clone
+                let _ = conn_txs.iter().map(|(_, c)| c).next().unwrap().send(Ok(event)); // only one connection, send directly without needing to clone
             }
             _ => {
-                for tx in conn_txs.iter() {
+                for (_, tx) in conn_txs.iter() {
                     let _ = tx.send(Ok(event.clone()));
                 }
             }
@@ -327,6 +342,7 @@ impl StratumServer {
 #[tonic::async_trait]
 impl pb::stratum_server::Stratum for StratumServer {
     type EventStreamStream = Pin<Box<dyn Stream<Item = Result<pb::DiscordEvent, Status>> + Send>>;
+    type ShardReadyStreamStream = Pin<Box<dyn Stream<Item = Result<pb::ShardReadyUpdate, Status>> + Send>>;
 
     async fn event_stream(&self, request: tonic::Request<pb::Worker>) -> Result<tonic::Response<Self::EventStreamStream>, Status> {
         let worker = request.into_inner();
@@ -429,6 +445,52 @@ impl pb::stratum_server::Stratum for StratumServer {
         Ok(tonic::Response::new(pb::StratumConfig { 
             num_workers: CONFIG.num_workers.try_into().map_err(|e| Status::internal(format!("Config fetch failed: {}", e)))?
         }))
+    }
+
+    async fn shard_ready_stream(&self, request: tonic::Request<pb::OtherAuthorized>) -> Result<tonic::Response<Self::ShardReadyStreamStream>, Status> {
+        let worker = request.into_inner();
+        worker.validate().map_err(|e| Status::unauthenticated(format!("Worker validation failed: {}", e)))?;
+
+        let (tx, rx) = mpsc::unbounded_channel();
+        let rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
+        let common_data = self.common_state.clone();
+        tokio::task::spawn(async move {
+            let mut shard_rxs = common_data.shards.shard_data.iter()
+                .map(|s| s.ready.is_ready_rx.clone())
+                .collect::<Vec<_>>();
+            
+            loop {
+                // Determine ready shards and push update
+                let ready_shards: Vec<u32> = shard_rxs.iter()
+                    .enumerate()
+                    .filter(|(_, rx)| *rx.borrow())
+                    .map(|(i, _)| i as u32)
+                    .collect();
+
+                let update = pb::ShardReadyUpdate {
+                    ready_shards,
+                    total_shards: shard_rxs.len() as u32,
+                };
+
+                if tx.send(Ok(update)).is_err() {
+                    break;
+                }
+                
+                // Now wait for next shard update
+                let has_changed = shard_rxs.iter_mut()
+                .map(|rx| {
+                    rx.mark_unchanged();
+                    Box::pin(rx.changed())
+                })
+                .collect::<Vec<_>>();
+
+                tokio::select! {
+                    _ = tx.closed() => break,
+                    _ = futures_util::future::select_all(has_changed) => continue,
+                }
+            }
+        });
+        Ok(tonic::Response::new(Box::pin(rx) as Self::ShardReadyStreamStream))
     }
 }
 

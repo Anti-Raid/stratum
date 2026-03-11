@@ -20,6 +20,30 @@ fn worker(wid: u32) -> pb::Worker {
     }
 }
 
+async fn wait_for_ready(mut client: pb::stratum_client::StratumClient<tonic::transport::Channel>) {
+    let mut ready_stream = client.shard_ready_stream(oauth()).await.expect("Failed to fetch ready_stream").into_inner();
+    loop {
+        tokio::select! {
+            evt = ready_stream.next() => {
+                let Some(evt) = evt else {
+                    continue;
+                };
+                match evt {
+                    Ok(evt) => {
+                        log::info!("Shards ready: {:?} ({}/{})", evt.ready_shards, evt.ready_shards.len(), evt.total_shards);
+                        if evt.ready_shards.len() as u32 == evt.total_shards {
+                            return;
+                        }
+                    },
+                    Err(e) => {
+                        log::error!("Error: {e}");
+                        panic!("Failed to wait for on_ready")
+                    }
+                }
+            }
+        }
+    }
+}
 
 pub async fn client() -> Result<(), crate::Error> {
     log::info!("Connecting to stratum...");
@@ -30,6 +54,8 @@ pub async fn client() -> Result<(), crate::Error> {
     let config = client.get_config(oauth()).await?;
     let num_workers = config.into_inner().num_workers;
     log::info!("Got stratum config, num workers: {num_workers}");
+
+    wait_for_ready(client.clone()).await;
 
     let tasks = (0..num_workers)
         .map(|wid| tokio::spawn(client_stub_worker(client.clone(), wid, shutdown_rx.clone())))
@@ -63,7 +89,8 @@ async fn client_stub_worker(mut client: pb::stratum_client::StratumClient<tonic:
                 };
                 match evt {
                     Ok(evt) => {
-                        log::info!("Got event: {}", evt.event_name);
+                        let value = serde_json::from_str::<serde_json::Value>(&evt.payload);
+                        log::info!("Got event: {} json_ok({})", evt.event_name, value.is_ok());
                     },
                     Err(e) => {
                         log::error!("Error: {e}");
