@@ -1,6 +1,7 @@
 use stratum_common::Error;
 pub use stratum_common::pb;
-use futures_util::StreamExt;
+use futures_util::{Stream, StreamExt};
+use tokio::sync::watch;
 
 /// Stratum mid/high-level client
 pub struct StratumClient {
@@ -31,30 +32,6 @@ impl StratumClient {
         Ok(resp.into_inner())
     }
 
-    /// Helper method that listens for a stream of events from `ShardReadyStream()` calling `f` with the stream and returning `Ok(())` once `f` returns `true`
-    pub async fn shard_ready_stream_wait(&self, on_event: impl Fn(pb::ShardReadyUpdate) -> bool) -> Result<(), Error> {
-        let mut ready_stream = self.shard_ready_stream().await?;
-        loop {
-            tokio::select! {
-                evt = ready_stream.next() => {
-                    let Some(evt) = evt else {
-                        continue;
-                    };
-                    match evt {
-                        Ok(evt) => {
-                            if (on_event)(evt) {
-                                return Ok(())
-                            }
-                        },
-                        Err(e) => {
-                            return Err(e.into());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     /// EventStream is a streaming RPC that allows the master to send Discord events to the worker
     /// 
     /// This returns a stream of events. The next event can then be retrieved with <stream.next()> 
@@ -76,6 +53,62 @@ impl StratumClient {
         pb::Worker {
             worker_id: wid,
             grpc_access_key: self.grpc_access_key.clone()    
+        }
+    }
+
+    /// Helper method that listens for a stream of events from the desired stream calling `f` with events and returning `Ok(())` once `f` returns `true`
+    pub async fn listen_to_stream_with_shutdown<S, T, F>(
+        &self,
+        mut stream: S,
+        mut shutdown: watch::Receiver<bool>,
+        on_event: F,
+    ) -> Result<(), Error> 
+    where
+        S: Stream<Item = Result<T, tonic::Status>> + Unpin,
+        F: Fn(T) -> bool,
+    {
+        loop {
+            tokio::select! {
+                _ = shutdown.changed() => return Ok(()),
+                next = stream.next() => {
+                    match next {
+                        Some(Ok(evt)) => {
+                            if on_event(evt) {
+                                return Ok(());
+                            }
+                        }
+                        Some(Err(e)) => return Err(e.into()),
+                        None => return Ok(()), // Stream closed by server
+                    }
+                }
+            }
+        }
+    }
+
+    /// Helper method that listens for a stream of events from the desired stream calling `f` with events and returning `Ok(())` once `f` returns `true`
+    pub async fn listen_to_stream<S, T, F>(
+        &self,
+        mut stream: S,
+        on_event: F,
+    ) -> Result<(), Error> 
+    where
+        S: Stream<Item = Result<T, tonic::Status>> + Unpin,
+        F: Fn(T) -> bool,
+    {
+        loop {
+            tokio::select! {
+                next = stream.next() => {
+                    match next {
+                        Some(Ok(evt)) => {
+                            if on_event(evt) {
+                                return Ok(());
+                            }
+                        }
+                        Some(Err(e)) => return Err(e.into()),
+                        None => return Ok(()), // Stream closed by server
+                    }
+                }
+            }
         }
     }
 }

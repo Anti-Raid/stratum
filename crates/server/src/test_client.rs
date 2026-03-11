@@ -1,6 +1,5 @@
 //! Test client for stratum
 
-use futures_util::StreamExt;
 use tokio::signal;
 use tokio::sync::watch;
 use std::sync::Arc;
@@ -15,7 +14,7 @@ pub async fn client() -> Result<(), crate::Error> {
     let num_workers = config.num_workers;
     log::info!("Got stratum config, num workers: {num_workers}");
 
-    client.shard_ready_stream_wait(|evt| {
+    client.listen_to_stream_with_shutdown(client.shard_ready_stream().await?, shutdown_rx.clone(), |evt| {
         log::info!("Shards ready: {:?} ({}/{})", evt.ready_shards, evt.ready_shards.len(), evt.total_shards);
         evt.ready_shards.len() as u32 == evt.total_shards
     }).await?;
@@ -38,31 +37,12 @@ pub async fn client() -> Result<(), crate::Error> {
     Ok(())
 }
 
-async fn client_stub_worker(client: Arc<stratum_client::StratumClient>, wid: u32, mut shutdown: watch::Receiver<bool>) {
-    let mut stream = client.event_stream(wid).await.expect("Failed to fetch event stream");
+async fn client_stub_worker(client: Arc<stratum_client::StratumClient>, wid: u32, shutdown: watch::Receiver<bool>) {
+    let stream = client.event_stream(wid).await.expect("Failed to fetch event stream");
     log::info!("Started event stream");
-    loop {
-        tokio::select! {
-            _ = shutdown.changed() => {
-                log::debug!("Closing client");
-            },
-            evt = stream.next() => {
-                let Some(evt) = evt else {
-                    continue;
-                };
-                match evt {
-                    Ok(evt) => {
-                        let value = serde_json::from_str::<serde_json::Value>(&evt.payload);
-                        log::info!("Got event: {} json_ok({})", evt.event_name, value.is_ok());
-                    },
-                    Err(e) => {
-                        log::error!("Error: {e}");
-                        // Make a new stream, dropping the existing one
-                        drop(stream);
-                        stream = client.event_stream(wid).await.expect("Failed to fetch event stream");
-                    }
-                }
-            }
-        }
-    }
+    client.listen_to_stream_with_shutdown(stream, shutdown, |evt| {
+        let value = serde_json::from_str::<serde_json::Value>(&evt.payload);
+        log::info!("Got event: {} json_ok({})", evt.event_name, value.is_ok());
+        true
+    }).await.expect("listen to stream ended");
 }
