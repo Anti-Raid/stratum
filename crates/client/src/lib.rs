@@ -1,7 +1,18 @@
-use stratum_common::Error;
+use stratum_common::{Error, GuildFetchOpts};
 pub use stratum_common::pb;
 use futures_util::{Stream, StreamExt};
 use tokio::sync::watch;
+
+/// A GetResourceRequest that is type-safe
+#[derive(Clone, Copy)]
+pub enum GetResourceRequest {
+    Channel { channel_id: u64 },
+    Guild { guild_id: u64, flags: GuildFetchOpts },
+    GuildRole { role_id: u64 },
+    GuildRoles { guild_id: u64 },
+    GuildChannels { guild_id: u64 },
+    CurrentUser,
+}
 
 /// Stratum mid/high-level client
 pub struct StratumClient {
@@ -49,14 +60,21 @@ impl StratumClient {
     }
 
     /// GetResourceFromCache returns the cached resource data or null
-    pub async fn get_resource_from_cache(&self, typ: pb::ResourceType, id: u64, flags: u32) -> Result<Option<serde_json::Value>, Error> {
+    /// 
+    /// Resource specific notes:
+    /// - For R_CURRENT_USER, id must be 0
+    pub async fn get_resource_from_cache(&self, req: GetResourceRequest) -> Result<Option<serde_json::Value>, Error> {
+        let grr = match req {
+            GetResourceRequest::Channel { channel_id } => pb::GetResourceRequest { r#type: pb::ResourceType::RChannel as i32, flags: 0, id: channel_id, auth: Some(self.oauth()) },
+            GetResourceRequest::Guild { guild_id, flags } => pb::GetResourceRequest { r#type: pb::ResourceType::RGuild as i32, flags: flags.bits(), id: guild_id, auth: Some(self.oauth()) },
+            GetResourceRequest::GuildRole { role_id } => pb::GetResourceRequest { r#type: pb::ResourceType::RGuildRole as i32, flags: 0, id: role_id, auth: Some(self.oauth()) },
+            GetResourceRequest::GuildRoles { guild_id } => pb::GetResourceRequest { r#type: pb::ResourceType::RGuildRoles as i32, flags: 0, id: guild_id, auth: Some(self.oauth()) },
+            GetResourceRequest::GuildChannels { guild_id } => pb::GetResourceRequest { r#type: pb::ResourceType::RGuildChannels as i32, flags: 0, id: guild_id, auth: Some(self.oauth()) },
+            GetResourceRequest::CurrentUser => pb::GetResourceRequest { r#type: pb::ResourceType::RCurrentUser as i32, flags: 0, id: 0, auth: Some(self.oauth()) },
+        };
+
         let mut client = self.client.clone();
-        let resp = client.get_resource_from_cache(pb::GetResourceRequest {
-            r#type: typ as i32,
-            auth: Some(self.oauth()),
-            id,
-            flags
-        }).await?;
+        let resp = client.get_resource_from_cache(grr).await?;
         resp.into_inner().to_real_exec()
     }
 

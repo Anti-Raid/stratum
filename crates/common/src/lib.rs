@@ -1,6 +1,23 @@
 use serde::Deserialize;
 use tonic::Status;
 
+bitflags::bitflags! {
+    #[derive(Copy, Clone)]
+    pub struct GuildFetchOpts: u32 {
+        // Whether to also fetch members
+        const INCLUDE_MEMBERS = 1 << 0;
+        // Whether to also fetch presences
+        const INCLUDE_PRESENCES = 1 << 1;
+    }
+}
+
+impl GuildFetchOpts {
+    /// Returns true if GuildFetchOpts is expensive enough to need to run on its own thread
+    pub fn is_expensive(&self) -> bool {
+        self.contains(Self::INCLUDE_MEMBERS)
+    } 
+}
+
 /// Internal transport layer
 pub mod pb {
     tonic::include_proto!("stratum");

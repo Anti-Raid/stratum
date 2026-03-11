@@ -61,11 +61,15 @@ message Status {
 enum ResourceType {
     R_CHANNEL = 0;
     R_GUILD = 1;
+    R_GUILD_ROLE = 2;
+    R_GUILD_ROLES = 3;
+    R_GUILD_CHANNELS = 4;
+    R_CURRENT_USER = 10;
 }
 
 message GetResourceRequest {
     ResourceType type = 1;
-    uint64 id = 2;
+    uint64 id = 2; // may be 0 (for e.g. R_CURRENT_USER)
     uint32 flags = 3;
     OtherAuthorized auth = 4;
 }

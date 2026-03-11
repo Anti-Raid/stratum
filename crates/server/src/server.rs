@@ -1,10 +1,10 @@
 use std::{collections::HashMap, pin::Pin, sync::{Arc, RwLock, atomic::{AtomicU64, Ordering}}, time::Duration};
 use serde::Deserialize;
-use stratum_common::pb;
+use stratum_common::{pb, GuildFetchOpts};
 use tokio::{signal, sync::watch, sync::mpsc};
 use twilight_cache_inmemory::model::CachedGuild;
 use twilight_gateway_queue::InMemoryQueue;
-use twilight_model::{channel::Channel, gateway::OpCode, id::{Id, marker::GuildMarker}};
+use twilight_model::{channel::Channel, gateway::OpCode, guild::Role, id::{Id, marker::GuildMarker}, user::CurrentUser};
 use twilight_gateway::{
     CloseFrame, ConfigBuilder, Event, EventTypeFlags, Intents, Message, Shard, ShardId, ShardState
 };
@@ -372,7 +372,7 @@ impl pb::stratum_server::Stratum for StratumServer {
             pb::ResourceType::RGuild => {
                 let id = Id::new_checked(ccr.id)
                 .ok_or_else(|| Status::invalid_argument("Missing guild_id in request"))?;
-                let flags = crate::cacher_guild::GuildFetchOpts::from_bits_truncate(ccr.flags);
+                let flags = GuildFetchOpts::from_bits_truncate(ccr.flags);
 
                 // Fetch the guild (using a sep thread if needed)
                 let g_opt = if flags.is_expensive() {
@@ -389,6 +389,41 @@ impl pb::stratum_server::Stratum for StratumServer {
                 }?; 
 
                 Ok(tonic::Response::new(g))
+            }
+            pb::ResourceType::RGuildRole => {
+                let id = Id::new_checked(ccr.id)
+                .ok_or_else(|| Status::invalid_argument("Missing role_id in request"))?;
+ 
+                let gr = match self.common_state.cache.role(id) {
+                    Some(gr) => pb::AnyValue::from_real(gr.value().resource()),
+                    None => pb::AnyValue::from_real(&None::<Role>)
+                }?;
+
+                Ok(tonic::Response::new(gr))
+            }
+            pb::ResourceType::RGuildRoles => {
+                let id = Id::new_checked(ccr.id)
+                .ok_or_else(|| Status::invalid_argument("Missing guild_id in request"))?;
+
+                let gr = crate::cacher_guild::get_roles_resource(&self.common_state.cache, id)?;
+
+                Ok(tonic::Response::new(gr))
+            }
+            pb::ResourceType::RGuildChannels => {
+                let id = Id::new_checked(ccr.id)
+                .ok_or_else(|| Status::invalid_argument("Missing guild_id in request"))?;
+
+                let gc = crate::cacher_guild::get_channels_resource(&self.common_state.cache, id)?;
+
+                Ok(tonic::Response::new(gc))
+            }
+            pb::ResourceType::RCurrentUser => {
+                let cu = match self.common_state.cache.current_user() {
+                    Some(cu) => pb::AnyValue::from_real(&cu),
+                    None => pb::AnyValue::from_real(&None::<CurrentUser>)
+                }?;
+
+                Ok(tonic::Response::new(cu))
             }
         }
     }

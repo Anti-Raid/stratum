@@ -9,3 +9,4 @@ Stratum replaces Sandwich-Daemon (which was what we previously used) with the ma
 - common: Contains the protobuf definition and some common protocol functions
 - server: Contains the core stratum server
 - client: Contains a mid/high-level client to communicate with the Stratum server and recieve Discord gateway events etc. from it.
+- torracat: Contains a simple test client for testing out stratum

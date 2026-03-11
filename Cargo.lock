@@ -1490,6 +1490,7 @@ dependencies = [
 name = "stratum_common"
 version = "0.1.0"
 dependencies = [
+ "bitflags",
  "prost",
  "prost-types",
  "rmp-serde",

@@ -2,27 +2,11 @@
 
 use twilight_model::{channel::{Channel, StageInstance, message::Sticker}, gateway::presence::{Presence, UserOrId}, guild::{Emoji, Guild, Member, Role, scheduled_event::GuildScheduledEvent}, id::{Id, marker::{GuildMarker, UserMarker}}, voice::VoiceState};
 use rayon::prelude::*;
+use stratum_common::{GuildFetchOpts, pb};
 
 const MIN_CHANNELS_TILL_THREADPOOL: usize = 100;
 const MIN_MEMBERS_TILL_THREADPOOL: usize = 1000;
 const MIN_PRESENCES_TILL_THREADPOOL: usize = 1000;
-
-bitflags::bitflags! {
-    #[derive(Copy, Clone)]
-    pub struct GuildFetchOpts: u32 {
-        // Whether to also fetch members
-        const INCLUDE_MEMBERS = 1 << 0;
-        // Whether to also fetch presences
-        const INCLUDE_PRESENCES = 1 << 1;
-    }
-}
-
-impl GuildFetchOpts {
-    /// Returns true if GuildFetchOpts is expensive enough to need to run on its own thread
-    pub fn is_expensive(&self) -> bool {
-        self.contains(Self::INCLUDE_MEMBERS)
-    } 
-}
 
 fn channels_and_threads(cache: &twilight_cache_inmemory::InMemoryCache, guild_id: Id<GuildMarker>) -> (Vec<Channel>, Vec<Channel>) {
     cache.guild_channels(guild_id).map(|reference| {
@@ -257,6 +241,7 @@ fn voice_states_in_guild(cache: &twilight_cache_inmemory::InMemoryCache, guild_i
         .unwrap_or_default()
 }
 
+/// Gets a guild object
 pub fn get_guild(
     cache: &twilight_cache_inmemory::InMemoryCache,
     guild_id: Id<GuildMarker>,
@@ -331,4 +316,46 @@ pub fn get_guild(
     };
 
     Some(new_guild)
+}
+
+/// Returns the roles of a guild, unlike `roles_in_guild`, this directly makes a pb::AnyValue for efficiency reasons
+/// and avoids cloning every role
+pub fn get_roles_resource(cache: &twilight_cache_inmemory::InMemoryCache, guild_id: Id<GuildMarker>) -> Result<pb::AnyValue, tonic::Status> {
+    let Some(roles) = cache
+        .guild_roles(guild_id) else {
+            return pb::AnyValue::from_real(&None::<Vec<Role>>);
+        };
+
+    let roles: Vec<_> = roles
+        .iter()
+        .filter_map(|id| cache.role(*id))
+        .collect(); // roles now holds the Reference guards
+
+    let role_refs: Vec<&Role> = roles
+        .iter()
+        .map(|r| r.value().resource())
+        .collect(); 
+    
+    pb::AnyValue::from_real(&role_refs)
+}
+
+/// Returns the channels of a guild, Unlike `channels_and_threads`, this directly makes a pb::AnyValue for efficiency reasons
+/// and avoids cloning every channel
+pub fn get_channels_resource(cache: &twilight_cache_inmemory::InMemoryCache, guild_id: Id<GuildMarker>) -> Result<pb::AnyValue, tonic::Status> {
+    let Some(chans) = cache
+        .guild_channels(guild_id) else {
+            return pb::AnyValue::from_real(&None::<Vec<Channel>>);
+        };
+
+    let chans: Vec<_> = chans
+        .iter()
+        .filter_map(|id| cache.channel(*id))
+        .collect(); // roles now holds the Reference guards
+
+    let chan_refs: Vec<&Channel> = chans
+        .iter()
+        .map(|r| r.value())
+        .collect(); 
+    
+    pb::AnyValue::from_real(&chan_refs)
 }
