@@ -57,38 +57,10 @@ impl StratumClient {
     }
 
     /// Helper method that listens for a stream of events from the desired stream calling `f` with events and returning `Ok(())` once `f` returns `true`
-    pub async fn listen_to_stream_with_shutdown<S, T, F>(
-        &self,
-        mut stream: S,
-        mut shutdown: watch::Receiver<bool>,
-        on_event: F,
-    ) -> Result<(), Error> 
-    where
-        S: Stream<Item = Result<T, tonic::Status>> + Unpin,
-        F: Fn(T) -> bool,
-    {
-        loop {
-            tokio::select! {
-                _ = shutdown.changed() => return Ok(()),
-                next = stream.next() => {
-                    match next {
-                        Some(Ok(evt)) => {
-                            if on_event(evt) {
-                                return Ok(());
-                            }
-                        }
-                        Some(Err(e)) => return Err(e.into()),
-                        None => return Ok(()), // Stream closed by server
-                    }
-                }
-            }
-        }
-    }
-
-    /// Helper method that listens for a stream of events from the desired stream calling `f` with events and returning `Ok(())` once `f` returns `true`
     pub async fn listen_to_stream<S, T, F>(
         &self,
         mut stream: S,
+        mut shutdown: Option<watch::Receiver<bool>>,
         on_event: F,
     ) -> Result<(), Error> 
     where
@@ -96,19 +68,32 @@ impl StratumClient {
         F: Fn(T) -> bool,
     {
         loop {
-            tokio::select! {
-                next = stream.next() => {
-                    match next {
-                        Some(Ok(evt)) => {
-                            if on_event(evt) {
-                                return Ok(());
-                            }
-                        }
-                        Some(Err(e)) => return Err(e.into()),
-                        None => return Ok(()), // Stream closed by server
+            if let Some(ref mut sd) = shutdown {
+                tokio::select! {
+                    _ = sd.changed() => return Ok(()),
+                    next = stream.next() => {
+                        if !Self::handle_next(next, &on_event)? { break; }
                     }
                 }
+            } else {
+                let next = stream.next().await;
+                if !Self::handle_next(next, &on_event)? { break; }
             }
+        }
+        Ok(())
+    }
+
+    /// Internal helper to process the stream result
+    fn handle_next<T, F>(
+        next: Option<Result<T, tonic::Status>>, 
+        on_event: &F
+    ) -> Result<bool, Error> 
+    where F: Fn(T) -> bool 
+    {
+        match next {
+            Some(Ok(evt)) => Ok(!(on_event)(evt)), // Continue if f returns false
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(false), // Stop loop
         }
     }
 }

@@ -14,7 +14,7 @@ pub async fn client() -> Result<(), crate::Error> {
     let num_workers = config.num_workers;
     log::info!("Got stratum config, num workers: {num_workers}");
 
-    client.listen_to_stream_with_shutdown(client.shard_ready_stream().await?, shutdown_rx.clone(), |evt| {
+    client.listen_to_stream(client.shard_ready_stream().await?, Some(shutdown_rx.clone()), |evt| {
         log::info!("Shards ready: {:?} ({}/{})", evt.ready_shards, evt.ready_shards.len(), evt.total_shards);
         evt.ready_shards.len() as u32 == evt.total_shards
     }).await?;
@@ -40,7 +40,7 @@ pub async fn client() -> Result<(), crate::Error> {
 async fn client_stub_worker(client: Arc<stratum_client::StratumClient>, wid: u32, shutdown: watch::Receiver<bool>) {
     let stream = client.event_stream(wid).await.expect("Failed to fetch event stream");
     log::info!("Started event stream");
-    client.listen_to_stream_with_shutdown(stream, shutdown, |evt| {
+    client.listen_to_stream(stream, Some(shutdown), |evt| {
         let value = serde_json::from_str::<serde_json::Value>(&evt.payload);
         log::info!("Got event: {} json_ok({})", evt.event_name, value.is_ok());
         false
