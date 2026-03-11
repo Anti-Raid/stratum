@@ -482,7 +482,7 @@ async fn dispatcher(mut shard: Shard, mut shutdown: watch::Receiver<bool>, commo
                     Message::Text(json_str) => json_str
                 };
 
-                if let Err(e) = dispatch_single(json_str, &common_state, &sd) {
+                if let Err(e) = dispatch_single(shard.id().number(), json_str, &common_state, &sd) {
                     log::warn!("dispatch_single on shard {} failed: {e}", shard.id());
                 }
             }
@@ -491,11 +491,15 @@ async fn dispatcher(mut shard: Shard, mut shutdown: watch::Receiver<bool>, commo
 }
 
 /// Helper method to actually perform the event dispatch + cache update
-fn dispatch_single(event_json: String, common_state: &CommonState, sd: &ShardData) -> Result<(), crate::Error> {
+fn dispatch_single(shard_id: u32, event_json: String, common_state: &CommonState, sd: &ShardData) -> Result<(), crate::Error> {
     let (event, event_name, opcode) = crate::eventparse::parse(&event_json, EventTypeFlags::all())?;
     
     if opcode != OpCode::Dispatch {
-        log::info!("Ignoring msg with opcode: {opcode:?}");
+        if opcode == OpCode::Reconnect {
+            log::info!("Shard {shard_id} is restarting");
+        }
+
+        log::debug!("Ignoring msg with opcode: {opcode:?}");
         return Ok(()); // Ignore non-dispatch messages
     }
     
@@ -664,6 +668,7 @@ pub async fn server() -> Result<(), crate::Error> {
         tokio::select! {
             _ = task => {},
             _ = signal::ctrl_c() => {}
+            _ = tokio::time::sleep(Duration::from_secs(5)) => {}
         };
     }
 
