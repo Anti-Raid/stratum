@@ -8,6 +8,9 @@ bitflags::bitflags! {
         const INCLUDE_MEMBERS = 1 << 0;
         // Whether to also fetch presences
         const INCLUDE_PRESENCES = 1 << 1;
+
+        // Externally defined 
+        const _ = !0;
     }
 }
 

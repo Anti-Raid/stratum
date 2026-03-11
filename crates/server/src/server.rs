@@ -372,7 +372,8 @@ impl pb::stratum_server::Stratum for StratumServer {
             pb::ResourceType::RGuild => {
                 let id = Id::new_checked(ccr.id)
                 .ok_or_else(|| Status::invalid_argument("Missing guild_id in request"))?;
-                let flags = GuildFetchOpts::from_bits_truncate(ccr.flags);
+                let flags = GuildFetchOpts::from_bits(ccr.flags)
+                .ok_or_else(|| Status::invalid_argument("Missing flags in request"))?;
 
                 // Fetch the guild (using a sep thread if needed)
                 let g_opt = if flags.is_expensive() {
