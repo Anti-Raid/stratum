@@ -1464,7 +1464,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "stratum_client",
  "stratum_common",
  "tokio",
  "tokio-stream",
@@ -1499,6 +1498,23 @@ dependencies = [
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
+]
+
+[[package]]
+name = "stratum_torracat"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "env_logger",
+ "futures-util",
+ "log",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "stratum_client",
+ "stratum_common",
+ "tokio",
+ "tonic",
 ]
 
 [[package]]

@@ -1,5 +1,3 @@
-//! Test client for stratum
-
 use tokio::signal;
 use tokio::sync::watch;
 use std::sync::Arc;
