@@ -43,6 +43,6 @@ async fn client_stub_worker(client: Arc<stratum_client::StratumClient>, wid: u32
     client.listen_to_stream_with_shutdown(stream, shutdown, |evt| {
         let value = serde_json::from_str::<serde_json::Value>(&evt.payload);
         log::info!("Got event: {} json_ok({})", evt.event_name, value.is_ok());
-        true
-    }).await.expect("listen to stream ended");
+        false
+    }).await.expect("listen to stream ended with an error");
 }
