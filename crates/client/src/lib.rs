@@ -41,6 +41,25 @@ impl StratumClient {
         Ok(resp.into_inner())
     }
 
+    /// GetStatus returns the current status of shards in Stratum
+    pub async fn get_status(&self) -> Result<pb::Status, Error> {
+        let mut client = self.client.clone();
+        let resp = client.get_status(self.oauth()).await?;
+        Ok(resp.into_inner())
+    }
+
+    /// GetResourceFromCache returns the cached resource data or null
+    pub async fn get_resource_from_cache(&self, typ: pb::ResourceType, id: u64, flags: u32) -> Result<Option<serde_json::Value>, Error> {
+        let mut client = self.client.clone();
+        let resp = client.get_resource_from_cache(pb::GetResourceRequest {
+            r#type: typ as i32,
+            auth: Some(self.oauth()),
+            id,
+            flags
+        }).await?;
+        resp.into_inner().to_real_exec()
+    }
+
     /// Returns a OtherAuthorized ident for API's requiring this level of identification
     fn oauth(&self) -> pb::OtherAuthorized {
         pb::OtherAuthorized {

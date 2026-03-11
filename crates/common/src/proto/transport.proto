@@ -91,7 +91,7 @@ service Stratum {
     // GetStatus returns the current status of shards in Stratum
     rpc GetStatus(OtherAuthorized) returns (Status);
 
-    // CachedChannel returns the cached channel data or null
+    // GetResourceFromCache returns the cached resource data or null
     //
     // @returns <resource>?
     rpc GetResourceFromCache(GetResourceRequest) returns (AnyValue);

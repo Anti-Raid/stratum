@@ -1481,6 +1481,7 @@ name = "stratum_client"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "serde_json",
  "stratum_common",
  "tokio",
  "tonic",
