@@ -39,6 +39,9 @@ pub async fn client() -> Result<(), crate::Error> {
 
 async fn client_stub_worker(client: Arc<stratum_client::StratumClient>, wid: u32, shutdown: watch::Receiver<bool>) {
     loop {
+        if *shutdown.borrow() {
+            return;
+        }
         match client_stub_worker_impl(client.clone(), wid, shutdown.clone()).await {
             Ok(_) => break,
             Err(e) => {
