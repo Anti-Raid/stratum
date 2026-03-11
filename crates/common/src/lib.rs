@@ -1,3 +1,4 @@
+use serde::Deserialize;
 use tonic::Status;
 
 /// Internal transport layer
@@ -38,6 +39,24 @@ impl pb::AnyValue {
         let val = decode_any(&self.data)
             .map_err(|e| format!("Failed to decode request value: {}", e))?;
         Ok(val)
+    }
+}
+
+impl pb::DiscordEvent {
+    /// Extracts the id, event name and the discord event data corresponding to said event from a DiscordEvent
+    pub fn extract<'a>(&'a self) -> Result<(pb::Id, &'a str, serde_json::Value), crate::Error> {
+        #[derive(Deserialize)]
+        pub struct Evt {
+            d: serde_json::Value,
+        }
+
+        let Some(id) = self.id else {
+            return Err("protocol violation: id not set".into());
+        };
+
+        let payload = serde_json::from_str::<Evt>(&self.payload)?;
+
+        Ok((id, &self.event_name, payload.d))
     }
 }
 

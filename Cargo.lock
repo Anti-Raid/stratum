@@ -1494,6 +1494,7 @@ dependencies = [
  "prost-types",
  "rmp-serde",
  "serde",
+ "serde_json",
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
