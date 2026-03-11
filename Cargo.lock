@@ -1456,28 +1456,36 @@ version = "0.1.0"
 dependencies = [
  "bitflags",
  "chrono",
- "dashmap",
  "env_logger",
  "futures-util",
  "log",
- "prost",
- "prost-types",
  "rayon",
- "rmp-serde",
  "rustls",
  "serde",
  "serde_json",
  "serde_yaml",
+ "stratum_common",
  "tokio",
  "tokio-stream",
  "tonic",
- "tonic-prost",
- "tonic-prost-build",
  "twilight-cache-inmemory",
  "twilight-gateway",
  "twilight-gateway-queue",
  "twilight-http",
  "twilight-model",
+]
+
+[[package]]
+name = "stratum_common"
+version = "0.1.0"
+dependencies = [
+ "prost",
+ "prost-types",
+ "rmp-serde",
+ "serde",
+ "tonic",
+ "tonic-prost",
+ "tonic-prost-build",
 ]
 
 [[package]]

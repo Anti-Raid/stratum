@@ -9,7 +9,7 @@ mod cacher_guild;
 use std::env::args;
 use std::io::Write;
 
-pub type Error = Box<dyn std::error::Error + Send + Sync>; // This is constant and should be copy pasted
+pub type Error = stratum_common::Error;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {

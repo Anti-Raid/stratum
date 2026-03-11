@@ -1,5 +1,6 @@
 use std::{collections::HashMap, pin::Pin, sync::{Arc, RwLock, atomic::{AtomicU64, Ordering}}, time::Duration};
 use serde::Deserialize;
+use stratum_common::pb;
 use tokio::{signal, sync::watch, sync::mpsc};
 use twilight_cache_inmemory::model::CachedGuild;
 use twilight_gateway_queue::InMemoryQueue;
@@ -12,82 +13,35 @@ use futures_util::{Stream, StreamExt};
 use tonic::Status;
 use crate::config::CONFIG;
 
-/// Internal transport layer
-pub(crate) mod pb {
-    tonic::include_proto!("stratum");
-}
-
-fn encode_any<T: serde::Serialize>(msg: &T) -> Result<Vec<u8>, crate::Error> {
-    let bytes = rmp_serde::encode::to_vec(msg)
-        .map_err(|e| format!("Failed to serialize Mesophyll any: {}", e))?;
-    Ok(bytes)
-}
-
-#[allow(dead_code)]
-fn decode_any<T: for<'de> serde::Deserialize<'de>>(msg: &[u8]) -> Result<T, crate::Error> {
-    let decoded: T = rmp_serde::from_slice(msg)
-        .map_err(|e| format!("Failed to deserialize Mesophyll any: {}", e))?;
-    Ok(decoded)
-}
-
-impl pb::AnyValue {
-    pub fn from_real<T: serde::Serialize>(value: &T) -> Result<Self, Status> {
-        Self::from_real_exec(value).map_err(|e| Status::internal(e.to_string()))
-    }
-
-    pub fn from_real_exec<T: serde::Serialize>(value: &T) -> Result<Self, crate::Error> {
-        let data = encode_any(value)
-            .map_err(|e| format!("Failed to encode response value: {}", e))?;
-        Ok(Self { data })
-    }
-
-    #[allow(dead_code)]
-    pub fn to_real<T: for<'de> serde::Deserialize<'de>>(&self) -> Result<T, Status> {
-        self.to_real_exec().map_err(|e| Status::internal(e.to_string()))
-    }
-
-    pub fn to_real_exec<T: for<'de> serde::Deserialize<'de>>(&self) -> Result<T, crate::Error> {
-        let val = decode_any(&self.data)
-            .map_err(|e| format!("Failed to decode request value: {}", e))?;
-        Ok(val)
+pub fn pb_id(tenant_id: TenantId) -> pb::Id {
+    match tenant_id {
+        TenantId::Guild(guild_id) => pb::Id {
+            tenant_id: guild_id.get(),
+            tenant_type: pb::TenantType::Guild as i32,
+        },
     }
 }
 
-impl pb::Id {
-    pub fn from_tenant_id(tenant_id: TenantId) -> Self {
-        match tenant_id {
-            TenantId::Guild(guild_id) => Self {
-                tenant_id: guild_id.get(),
-                tenant_type: pb::TenantType::Guild as i32,
-            },
-        }
+/// Validates workers
+pub fn validate_worker(worker: &pb::Worker) -> Result<(), crate::Error> {
+    // For now we just check that the worker ID is within bounds, but we can add more validation later if needed
+    if worker.worker_id as usize >= CONFIG.num_workers {
+        return Err(format!("Worker ID {} is out of bounds for number of workers {}", worker.worker_id, CONFIG.num_workers).into());
     }
+
+    if worker.grpc_access_key != CONFIG.grpc_access_key {
+        return Err("Invalid gRPC access key".into());
+    }
+
+    Ok(())
 }
 
-// Validates workers
-impl pb::Worker {
-    pub fn validate(&self) -> Result<(), crate::Error> {
-        // For now we just check that the worker ID is within bounds, but we can add more validation later if needed
-        if self.worker_id as usize >= CONFIG.num_workers {
-            return Err(format!("Worker ID {} is out of bounds for number of workers {}", self.worker_id, CONFIG.num_workers).into());
-        }
-
-        if self.grpc_access_key != CONFIG.grpc_access_key {
-            return Err("Invalid gRPC access key".into());
-        }
-
-        Ok(())
-    }
-}
-
-// Validates other authorized requests
-impl pb::OtherAuthorized {
-    pub fn validate(&self) -> Result<(), crate::Error> {
-        if self.grpc_access_key != CONFIG.grpc_access_key {
-            return Err("Invalid gRPC access key".into());
-        }   
-        Ok(())
-    }
+/// Validates other authorized requests
+pub fn validate_oauth(oauth: &pb::OtherAuthorized) -> Result<(), crate::Error> {
+    if oauth.grpc_access_key != CONFIG.grpc_access_key {
+        return Err("Invalid gRPC access key".into());
+    }   
+    Ok(())
 }
 
 /// Core ID struct
@@ -346,7 +300,7 @@ impl pb::stratum_server::Stratum for StratumServer {
 
     async fn event_stream(&self, request: tonic::Request<pb::Worker>) -> Result<tonic::Response<Self::EventStreamStream>, Status> {
         let worker = request.into_inner();
-        worker.validate().map_err(|e| Status::unauthenticated(format!("Worker validation failed: {}", e)))?;
+        validate_worker(&worker).map_err(|e| Status::unauthenticated(format!("Worker validation failed: {}", e)))?;
 
         let (tx, rx) = mpsc::unbounded_channel();
         self.common_state.workers.get_worker_by_id(worker.worker_id as usize).add_connection(tx);
@@ -356,7 +310,7 @@ impl pb::stratum_server::Stratum for StratumServer {
 
     async fn get_status(&self, request: tonic::Request<pb::OtherAuthorized>) -> Result<tonic::Response<pb::Status>, Status> {
         let other = request.into_inner();
-        other.validate().map_err(|e| Status::unauthenticated(format!("Validation failed: {}", e)))?;
+        validate_oauth(&other).map_err(|e| Status::unauthenticated(format!("Validation failed: {}", e)))?;
         let mut shards = Vec::with_capacity(self.common_state.shards.shard_data.len());
 
         for shard_data in self.common_state.shards.shard_data.iter() {
@@ -401,7 +355,7 @@ impl pb::stratum_server::Stratum for StratumServer {
         let Some(other) = ccr.auth else {
             return Err(Status::unauthenticated(format!("No other found")));
         };
-        other.validate().map_err(|e| Status::unauthenticated(format!("Validation failed: {}", e)))?;
+        validate_oauth(&other).map_err(|e| Status::unauthenticated(format!("Validation failed: {}", e)))?;
         
         match typ {
             pb::ResourceType::RChannel => {
@@ -441,15 +395,15 @@ impl pb::stratum_server::Stratum for StratumServer {
 
     async fn get_config(&self, request: tonic::Request<pb::OtherAuthorized>) -> Result<tonic::Response<pb::StratumConfig>, Status> {
         let other = request.into_inner();
-        other.validate().map_err(|e| Status::unauthenticated(format!("Validation failed: {}", e)))?;
+        validate_oauth(&other).map_err(|e| Status::unauthenticated(format!("Validation failed: {}", e)))?;
         Ok(tonic::Response::new(pb::StratumConfig { 
             num_workers: CONFIG.num_workers.try_into().map_err(|e| Status::internal(format!("Config fetch failed: {}", e)))?
         }))
     }
 
     async fn shard_ready_stream(&self, request: tonic::Request<pb::OtherAuthorized>) -> Result<tonic::Response<Self::ShardReadyStreamStream>, Status> {
-        let worker = request.into_inner();
-        worker.validate().map_err(|e| Status::unauthenticated(format!("Worker validation failed: {}", e)))?;
+        let other = request.into_inner();
+        validate_oauth(&other).map_err(|e| Status::unauthenticated(format!("Worker validation failed: {}", e)))?;
 
         let (tx, rx) = mpsc::unbounded_channel();
         let rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
@@ -582,7 +536,7 @@ fn dispatch_single(event_json: String, common_state: &CommonState, sd: &ShardDat
     worker.send_event(pb::DiscordEvent {
         event_name,
         payload: event_json,
-        id: Some(pb::Id::from_tenant_id(tenant_id)),
+        id: Some(pb_id(tenant_id)),
     });
 
     Ok(())

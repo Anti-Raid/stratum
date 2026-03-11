@@ -4,7 +4,7 @@ use futures_util::StreamExt;
 use tokio::signal;
 use tokio::sync::watch;
 
-use crate::server::pb;
+use stratum_common::pb;
 use crate::config::CONFIG;
 
 fn oauth() -> pb::OtherAuthorized {
