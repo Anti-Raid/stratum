@@ -1480,9 +1480,7 @@ dependencies = [
 name = "stratum_client"
 version = "0.1.0"
 dependencies = [
- "env_logger",
  "futures-util",
- "log",
  "stratum_common",
  "tokio",
  "tonic",
