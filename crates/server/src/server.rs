@@ -437,6 +437,7 @@ impl pb::stratum_server::Stratum for StratumServer {
         };
         validate_oauth(&other).map_err(|e| Status::unauthenticated(format!("Validation failed: {}", e)))?;
         
+        #[inline(always)]
         fn get_id<T>(id: u64) -> Result<Id<T>, Status> {
             Id::new_checked(id).ok_or_else(|| Status::invalid_argument("Invalid Snowflake ID"))
         }
