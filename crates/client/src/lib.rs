@@ -110,7 +110,7 @@ impl StratumClient {
     /// 
     /// Resource specific notes:
     /// - For R_CURRENT_USER, id must be 0
-    pub async fn is_resource_in_cache(&self, req: IsResourceInCacheRequest) -> Result<bool, Error> {
+    pub async fn is_resource_in_cache(&self, req: IsResourceInCacheRequest) -> Result<pb::IsResourceInCacheResponse, Error> {
         let grr = match req {
             IsResourceInCacheRequest::Channel { channel_id } => pb::IsResourceInCacheRequest { r#type: pb::ResourceType::RChannel as i32, id: channel_id, id_b: 0, auth: Some(self.oauth()) },
             IsResourceInCacheRequest::Guild { guild_id } => pb::IsResourceInCacheRequest { r#type: pb::ResourceType::RGuild as i32, id: guild_id, id_b: 0, auth: Some(self.oauth()) },
@@ -123,7 +123,7 @@ impl StratumClient {
 
         let mut client = self.client.clone();
         let resp = client.is_resource_in_cache(grr).await?;
-        Ok(resp.into_inner().cached)
+        Ok(resp.into_inner())
     }
 
     /// Returns a OtherAuthorized ident for API's requiring this level of identification
