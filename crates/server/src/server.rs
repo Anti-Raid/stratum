@@ -1,5 +1,6 @@
 use std::{collections::HashMap, pin::Pin, sync::{Arc, RwLock, atomic::{AtomicU64, Ordering}}, time::Duration};
 use serde::Deserialize;
+use serde_json::value::RawValue;
 use stratum_common::{pb, GuildFetchOpts};
 use tokio::{signal, sync::watch, sync::mpsc};
 use twilight_cache_inmemory::model::CachedGuild;
@@ -620,12 +621,16 @@ fn dispatch_single(shard_id: u32, event_json: String, common_state: &CommonState
         return Ok(());
     }
     
-    let (guild_id, msg_author) = deduce_ids(&event_json, &parsed_event);
+    let (event, guild_id, msg_author) = deduce_parts(&event_json, &parsed_event);
+    let Some(event) = event else {
+        log::info!("Ignoring msg with no known 'd': {event_json}");
+        return Ok(());
+    };
     let Some(guild_id) = guild_id else {
         // ignore events we can't deduce a guild_id for, since we won't know which tenant to route them to
         //
         // TODO: Change this when we support user-installed apps in stratum
-        log::info!("Ignoring msg with no known guild id: {event_json}");
+        log::info!("Ignoring msg with no known guild id: {event}");
         return Ok(()); 
     };
 
@@ -633,7 +638,7 @@ fn dispatch_single(shard_id: u32, event_json: String, common_state: &CommonState
     let worker = common_state.workers.get_worker_for_tenant(tenant_id);
     worker.send_event(pb::DiscordEvent {
         event_name,
-        payload: event_json,
+        payload: event,
         guild_id: guild_id.get(),
         msg_author: msg_author.map(|x| x.get()).unwrap_or(0)
     });
@@ -641,8 +646,18 @@ fn dispatch_single(shard_id: u32, event_json: String, common_state: &CommonState
     Ok(())
 }
 
-/// Helper method to deduce the guild_id and msg_author from an event, if possible
-fn deduce_ids(raw_json: &str, parsed_event: &Option<Event>) -> (Option<Id<GuildMarker>>, Option<Id<UserMarker>>) {
+/// Helper method to deduce the d key, guild_id and msg_author from an event, if possible
+fn deduce_parts(raw_json: &str, parsed_event: &Option<Event>) -> (Option<String>, Option<Id<GuildMarker>>, Option<Id<UserMarker>>) {
+    #[derive(Deserialize)]
+    struct Evt<'a> {
+        #[serde(borrow)]
+        d: &'a RawValue,
+    }
+
+    let Ok(input) = serde_json::from_str::<Evt>(raw_json) else {
+        return (None, None, None)
+    };
+
     if let Some(event) = parsed_event {
         // Find guild_id, handling cases not handled by twilight's event.guild_id()
         let guild_id = match event {
@@ -658,25 +673,20 @@ fn deduce_ids(raw_json: &str, parsed_event: &Option<Event>) -> (Option<Id<GuildM
             _ => None,
         };
 
-        (guild_id, msg_author)
+        (Some(input.d.to_string()), guild_id, msg_author)
     } else {
         // Fallback to wildcard parsing to try extracting guild id from event
         #[derive(Deserialize)]
         struct IdData {
             guild_id: Option<Id<GuildMarker>>,
         }
-
-        #[derive(Deserialize)]
-        struct IdWrapper {
-            d: IdData,
-        }
         
-        if let Ok(wrapper) = serde_json::from_str::<IdWrapper>(raw_json) {
-            return (wrapper.d.guild_id, None);
+        if let Ok(wrapper) = serde_json::from_str::<IdData>(input.d.get()) {
+            return (Some(input.d.to_string()), wrapper.guild_id, None);
         }
 
         // If we can't find the ids, return None and ignore the event, since we won't know which tenant to route it to
-        (None, None)
+        (None, None, None)
     }
 }
 

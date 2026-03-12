@@ -1,4 +1,3 @@
-use serde::Deserialize;
 use tonic::Status;
 
 bitflags::bitflags! {
@@ -59,20 +58,6 @@ impl pb::AnyValue {
         let val = decode_any(&self.data)
             .map_err(|e| format!("Failed to decode request value: {}", e))?;
         Ok(val)
-    }
-}
-
-impl pb::DiscordEvent {
-    /// Extracts the discord event data from DiscordEvent
-    pub fn extract(self) -> Result<serde_json::Value, crate::Error> {
-        #[derive(Deserialize)]
-        pub struct Evt {
-            d: serde_json::Value,
-        }
-
-        let payload = serde_json::from_str::<Evt>(&self.payload)?;
-
-        Ok(payload.d)
     }
 }
 

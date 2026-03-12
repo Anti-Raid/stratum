@@ -54,9 +54,8 @@ async fn client_stub_worker_impl(client: Arc<stratum_client::StratumClient>, wid
     let stream = client.event_stream(wid).await?;
     log::info!("[Worker {wid}] Started event stream");
     client.listen_to_stream(stream, Some(shutdown), |evt| {
-        let evt_name = evt.event_name.clone();
-        let value = evt.extract();
-        log::info!("[Worker {wid}] Got event: {} json_ok({})", evt_name, value.is_ok());
+        let value = serde_json::from_str::<serde_json::Value>(&evt.payload);
+        log::info!("[Worker {wid}] Got event: {} json_ok({})", evt.event_name, value.is_ok());
         false
     }).await?;
     Ok(())
