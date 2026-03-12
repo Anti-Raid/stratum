@@ -25,15 +25,15 @@ pub mod pb {
     tonic::include_proto!("stratum");
 }
 
-fn encode_any<T: serde::Serialize>(msg: &T) -> Result<Vec<u8>, crate::Error> {
-    let bytes = rmp_serde::encode::to_vec(msg)
+fn encode_any<T: serde::Serialize>(msg: &T) -> Result<String, crate::Error> {
+    let bytes = serde_json::to_string(msg)
         .map_err(|e| format!("Failed to serialize Mesophyll any: {}", e))?;
     Ok(bytes)
 }
 
 #[allow(dead_code)]
-fn decode_any<T: for<'de> serde::Deserialize<'de>>(msg: &[u8]) -> Result<T, crate::Error> {
-    let decoded: T = rmp_serde::from_slice(msg)
+fn decode_any<T: for<'de> serde::Deserialize<'de>>(msg: &str) -> Result<T, crate::Error> {
+    let decoded: T = serde_json::from_str(msg)
         .map_err(|e| format!("Failed to deserialize Mesophyll any: {}", e))?;
     Ok(decoded)
 }

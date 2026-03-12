@@ -3,8 +3,8 @@ syntax = "proto3";
 package stratum;
 
 message AnyValue {
-    // msgpack encoded response
-    bytes data = 1;
+    // json encoded response
+    string data = 1;
 }
 
 // A event from discord to the target worker
