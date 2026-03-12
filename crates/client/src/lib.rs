@@ -150,7 +150,7 @@ impl StratumClient {
         let mut client = self.client.clone();
         let resp = client.get_resource_from_cache(grr).await?;
         let inner = resp.into_inner();
-        println!("{:?}", inner.data);
+        //println!("{:?}", inner.data);
         inner.to_real_exec()
     }
 
@@ -159,7 +159,7 @@ impl StratumClient {
         let Some(v) = self.get_resource_from_cache(req).await? else {
             return Ok(None)
         };
-        println!("{v:?}");
+        //println!("{v:?}");
         Ok(serde_json::from_value(v)?)
     }
 
