@@ -356,7 +356,7 @@ impl pb::stratum_server::Stratum for StratumServer {
             return Err(Status::unauthenticated(format!("No other found")));
         };
         validate_oauth(&other).map_err(|e| Status::unauthenticated(format!("Validation failed: {}", e)))?;
-        
+  
         match typ {
             pb::ResourceType::RChannel => {
                 let id = Id::new_checked(ccr.id)
@@ -437,40 +437,17 @@ impl pb::stratum_server::Stratum for StratumServer {
         };
         validate_oauth(&other).map_err(|e| Status::unauthenticated(format!("Validation failed: {}", e)))?;
         
+        fn get_id<T>(id: u64) -> Result<Id<T>, Status> {
+            Id::new_checked(id).ok_or_else(|| Status::invalid_argument("Invalid Snowflake ID"))
+        }
+
         let is_cached = match typ {
-            pb::ResourceType::RChannel => {
-                let id = Id::new_checked(ccr.id)
-                .ok_or_else(|| Status::invalid_argument("Missing channel info in request"))?;
-
-                self.common_state.cache.channel(id).is_some()
-            }
-            pb::ResourceType::RGuild => {
-                let id = Id::new_checked(ccr.id)
-                .ok_or_else(|| Status::invalid_argument("Missing guild_id in request"))?;
-
-                self.common_state.cache.guild(id).is_some()
-            }
-            pb::ResourceType::RGuildRole => {
-                let id = Id::new_checked(ccr.id)
-                .ok_or_else(|| Status::invalid_argument("Missing role_id in request"))?;
- 
-                self.common_state.cache.role(id).is_some()
-            }
-            pb::ResourceType::RGuildRoles => {
-                let id = Id::new_checked(ccr.id)
-                .ok_or_else(|| Status::invalid_argument("Missing guild_id in request"))?;
-
-                self.common_state.cache.guild_roles(id).is_some()
-            }
-            pb::ResourceType::RGuildChannels => {
-                let id = Id::new_checked(ccr.id)
-                .ok_or_else(|| Status::invalid_argument("Missing guild_id in request"))?;
-
-                self.common_state.cache.guild_channels(id).is_some()
-            }
-            pb::ResourceType::RCurrentUser => {
-                self.common_state.cache.current_user().is_some()
-            }
+            pb::ResourceType::RChannel => self.common_state.cache.channel(get_id(ccr.id)?).is_some(),
+            pb::ResourceType::RGuild => self.common_state.cache.guild(get_id(ccr.id)?).is_some(),
+            pb::ResourceType::RGuildRole => self.common_state.cache.role(get_id(ccr.id)?).is_some(),
+            pb::ResourceType::RGuildRoles => self.common_state.cache.guild_roles(get_id(ccr.id)?).is_some(),
+            pb::ResourceType::RGuildChannels => self.common_state.cache.guild_channels(get_id(ccr.id)?).is_some(),
+            pb::ResourceType::RCurrentUser => self.common_state.cache.current_user().is_some(),
         };
 
         Ok(tonic::Response::new(pb::IsResourceInCacheResponse { cached: is_cached }))
