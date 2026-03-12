@@ -423,7 +423,7 @@ impl pb::stratum_server::Stratum for StratumServer {
                 let cu = match self.common_state.cache.current_user() {
                     Some(cu) => pb::AnyValue::from_real(&cu),
                     None => pb::AnyValue::from_real(&None::<CurrentUser>)
-                }?;
+                }?; 
 
                 Ok(tonic::Response::new(cu))
             }

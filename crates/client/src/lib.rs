@@ -149,7 +149,9 @@ impl StratumClient {
 
         let mut client = self.client.clone();
         let resp = client.get_resource_from_cache(grr).await?;
-        resp.into_inner().to_real_exec()
+        let inner = resp.into_inner();
+        println!("{:?}", inner.data);
+        inner.to_real_exec()
     }
 
     /// Helper method on top of `get_resource_from_cache` that also deserializes into a `T`
