@@ -64,19 +64,22 @@ enum ResourceType {
     R_GUILD_ROLE = 2;
     R_GUILD_ROLES = 3;
     R_GUILD_CHANNELS = 4;
+    R_GUILD_MEMBER = 5;
     R_CURRENT_USER = 10;
 }
 
 message GetResourceRequest {
     ResourceType type = 1;
     uint64 id = 2; // may be 0 (for e.g. R_CURRENT_USER)
-    uint32 flags = 3;
-    OtherAuthorized auth = 4;
+    uint64 id_b = 3; // only set for R_GUILD_MEMBER
+    uint32 flags = 4;
+    OtherAuthorized auth = 5;
 }
 
 message IsResourceInCacheRequest {
     ResourceType type = 1;
     uint64 id = 2; // may be 0 (for e.g. R_CURRENT_USER)
+    uint64 id_b = 3; // only set for R_GUILD_MEMBER
     OtherAuthorized auth = 4;
 }
 

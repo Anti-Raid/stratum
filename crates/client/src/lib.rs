@@ -11,6 +11,7 @@ pub enum GetResourceRequest {
     GuildRole { role_id: u64 },
     GuildRoles { guild_id: u64 },
     GuildChannels { guild_id: u64 },
+    GuildMember { guild_id: u64, user_id: u64 },
     CurrentUser,
 }
 
@@ -22,6 +23,7 @@ pub enum IsResourceInCacheRequest {
     GuildRole { role_id: u64 },
     GuildRoles { guild_id: u64 },
     GuildChannels { guild_id: u64 },
+    GuildMember { guild_id: u64, user_id: u64 },
     CurrentUser,
 }
 
@@ -76,12 +78,13 @@ impl StratumClient {
     /// - For R_CURRENT_USER, id must be 0
     pub async fn get_resource_from_cache(&self, req: GetResourceRequest) -> Result<Option<serde_json::Value>, Error> {
         let grr = match req {
-            GetResourceRequest::Channel { channel_id } => pb::GetResourceRequest { r#type: pb::ResourceType::RChannel as i32, flags: 0, id: channel_id, auth: Some(self.oauth()) },
-            GetResourceRequest::Guild { guild_id, flags } => pb::GetResourceRequest { r#type: pb::ResourceType::RGuild as i32, flags: flags.bits(), id: guild_id, auth: Some(self.oauth()) },
-            GetResourceRequest::GuildRole { role_id } => pb::GetResourceRequest { r#type: pb::ResourceType::RGuildRole as i32, flags: 0, id: role_id, auth: Some(self.oauth()) },
-            GetResourceRequest::GuildRoles { guild_id } => pb::GetResourceRequest { r#type: pb::ResourceType::RGuildRoles as i32, flags: 0, id: guild_id, auth: Some(self.oauth()) },
-            GetResourceRequest::GuildChannels { guild_id } => pb::GetResourceRequest { r#type: pb::ResourceType::RGuildChannels as i32, flags: 0, id: guild_id, auth: Some(self.oauth()) },
-            GetResourceRequest::CurrentUser => pb::GetResourceRequest { r#type: pb::ResourceType::RCurrentUser as i32, flags: 0, id: 0, auth: Some(self.oauth()) },
+            GetResourceRequest::Channel { channel_id } => pb::GetResourceRequest { r#type: pb::ResourceType::RChannel as i32, flags: 0, id: channel_id, id_b: 0, auth: Some(self.oauth()) },
+            GetResourceRequest::Guild { guild_id, flags } => pb::GetResourceRequest { r#type: pb::ResourceType::RGuild as i32, flags: flags.bits(), id: guild_id, id_b: 0, auth: Some(self.oauth()) },
+            GetResourceRequest::GuildRole { role_id } => pb::GetResourceRequest { r#type: pb::ResourceType::RGuildRole as i32, flags: 0, id: role_id, id_b: 0, auth: Some(self.oauth()) },
+            GetResourceRequest::GuildRoles { guild_id } => pb::GetResourceRequest { r#type: pb::ResourceType::RGuildRoles as i32, flags: 0, id: guild_id, id_b: 0, auth: Some(self.oauth()) },
+            GetResourceRequest::GuildChannels { guild_id } => pb::GetResourceRequest { r#type: pb::ResourceType::RGuildChannels as i32, flags: 0, id: guild_id, id_b: 0, auth: Some(self.oauth()) },
+            GetResourceRequest::GuildMember { guild_id, user_id } => pb::GetResourceRequest { r#type: pb::ResourceType::RGuildMember as i32, flags: 0, id: guild_id, id_b: user_id, auth: Some(self.oauth()) },
+            GetResourceRequest::CurrentUser => pb::GetResourceRequest { r#type: pb::ResourceType::RCurrentUser as i32, flags: 0, id: 0, id_b: 0, auth: Some(self.oauth()) },
         };
 
         let mut client = self.client.clone();
@@ -95,12 +98,13 @@ impl StratumClient {
     /// - For R_CURRENT_USER, id must be 0
     pub async fn is_resource_in_cache(&self, req: IsResourceInCacheRequest) -> Result<bool, Error> {
         let grr = match req {
-            IsResourceInCacheRequest::Channel { channel_id } => pb::IsResourceInCacheRequest { r#type: pb::ResourceType::RChannel as i32, id: channel_id, auth: Some(self.oauth()) },
-            IsResourceInCacheRequest::Guild { guild_id } => pb::IsResourceInCacheRequest { r#type: pb::ResourceType::RGuild as i32, id: guild_id, auth: Some(self.oauth()) },
-            IsResourceInCacheRequest::GuildRole { role_id } => pb::IsResourceInCacheRequest { r#type: pb::ResourceType::RGuildRole as i32, id: role_id, auth: Some(self.oauth()) },
-            IsResourceInCacheRequest::GuildRoles { guild_id } => pb::IsResourceInCacheRequest { r#type: pb::ResourceType::RGuildRoles as i32, id: guild_id, auth: Some(self.oauth()) },
-            IsResourceInCacheRequest::GuildChannels { guild_id } => pb::IsResourceInCacheRequest { r#type: pb::ResourceType::RGuildChannels as i32, id: guild_id, auth: Some(self.oauth()) },
-            IsResourceInCacheRequest::CurrentUser => pb::IsResourceInCacheRequest { r#type: pb::ResourceType::RCurrentUser as i32, id: 0, auth: Some(self.oauth()) },
+            IsResourceInCacheRequest::Channel { channel_id } => pb::IsResourceInCacheRequest { r#type: pb::ResourceType::RChannel as i32, id: channel_id, id_b: 0, auth: Some(self.oauth()) },
+            IsResourceInCacheRequest::Guild { guild_id } => pb::IsResourceInCacheRequest { r#type: pb::ResourceType::RGuild as i32, id: guild_id, id_b: 0, auth: Some(self.oauth()) },
+            IsResourceInCacheRequest::GuildRole { role_id } => pb::IsResourceInCacheRequest { r#type: pb::ResourceType::RGuildRole as i32, id: role_id, id_b: 0, auth: Some(self.oauth()) },
+            IsResourceInCacheRequest::GuildRoles { guild_id } => pb::IsResourceInCacheRequest { r#type: pb::ResourceType::RGuildRoles as i32, id: guild_id, id_b: 0, auth: Some(self.oauth()) },
+            IsResourceInCacheRequest::GuildChannels { guild_id } => pb::IsResourceInCacheRequest { r#type: pb::ResourceType::RGuildChannels as i32, id: guild_id, id_b: 0, auth: Some(self.oauth()) },
+            IsResourceInCacheRequest::GuildMember { guild_id, user_id } => pb::IsResourceInCacheRequest { r#type: pb::ResourceType::RGuildMember as i32, id: guild_id, id_b: user_id, auth: Some(self.oauth()) },
+            IsResourceInCacheRequest::CurrentUser => pb::IsResourceInCacheRequest { r#type: pb::ResourceType::RCurrentUser as i32, id: 0, id_b: 0, auth: Some(self.oauth()) },
         };
 
         let mut client = self.client.clone();

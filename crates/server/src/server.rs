@@ -4,7 +4,7 @@ use stratum_common::{pb, GuildFetchOpts};
 use tokio::{signal, sync::watch, sync::mpsc};
 use twilight_cache_inmemory::model::CachedGuild;
 use twilight_gateway_queue::InMemoryQueue;
-use twilight_model::{channel::Channel, gateway::OpCode, guild::Role, id::{Id, marker::GuildMarker}, user::CurrentUser};
+use twilight_model::{channel::Channel, gateway::OpCode, guild::{Member, Role}, id::{Id, marker::GuildMarker}, user::CurrentUser};
 use twilight_gateway::{
     CloseFrame, ConfigBuilder, Event, EventTypeFlags, Intents, Message, Shard, ShardId, ShardState
 };
@@ -406,17 +406,26 @@ impl pb::stratum_server::Stratum for StratumServer {
             }
             pb::ResourceType::RGuildRoles => {
                 let id = get_id(ccr.id)?;
-
                 let gr = crate::cacher_guild::get_roles_resource(&self.common_state.cache, id)?;
 
                 Ok(tonic::Response::new(gr))
             }
             pb::ResourceType::RGuildChannels => {
                 let id = get_id(ccr.id)?;
-
                 let gc = crate::cacher_guild::get_channels_resource(&self.common_state.cache, id)?;
 
                 Ok(tonic::Response::new(gc))
+            }
+            pb::ResourceType::RGuildMember => {
+                let guild_id = get_id(ccr.id)?;
+                let user_id = get_id(ccr.id_b)?;
+
+                let gm = match crate::cacher_guild::member(&self.common_state.cache, guild_id, user_id) {
+                    Some(gm) => pb::AnyValue::from_real(&gm),
+                    None => pb::AnyValue::from_real(&None::<Member>)
+                }?;
+
+                Ok(tonic::Response::new(gm))
             }
             pb::ResourceType::RCurrentUser => {
                 let cu = match self.common_state.cache.current_user() {
@@ -443,6 +452,7 @@ impl pb::stratum_server::Stratum for StratumServer {
             pb::ResourceType::RGuildRole => self.common_state.cache.role(get_id(ccr.id)?).is_some(),
             pb::ResourceType::RGuildRoles => self.common_state.cache.guild_roles(get_id(ccr.id)?).is_some(),
             pb::ResourceType::RGuildChannels => self.common_state.cache.guild_channels(get_id(ccr.id)?).is_some(),
+            pb::ResourceType::RGuildMember => self.common_state.cache.member(get_id(ccr.id)?, get_id(ccr.id_b)?).is_some(),
             pb::ResourceType::RCurrentUser => self.common_state.cache.current_user().is_some(),
         };
 

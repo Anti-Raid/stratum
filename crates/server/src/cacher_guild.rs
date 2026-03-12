@@ -94,7 +94,8 @@ fn emojis_in_guild(cache: &twilight_cache_inmemory::InMemoryCache, guild_id: Id<
         .unwrap_or_default()
 }
 
-fn member(cache: &twilight_cache_inmemory::InMemoryCache, guild_id: Id<GuildMarker>, user_id: Id<UserMarker>) -> Option<Member> {
+/// Given cache, guild_id and user_id, returns a member
+pub fn member(cache: &twilight_cache_inmemory::InMemoryCache, guild_id: Id<GuildMarker>, user_id: Id<UserMarker>) -> Option<Member> {
     let member = cache.member(guild_id, user_id)?;
 
     Some(Member {
