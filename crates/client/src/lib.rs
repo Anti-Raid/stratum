@@ -6,25 +6,39 @@ use tokio::sync::watch;
 /// A GetResourceRequest that is type-safe
 #[derive(Clone, Copy)]
 pub enum GetResourceRequest {
-    Channel { channel_id: u64 },
-    Guild { guild_id: u64, flags: GuildFetchOpts },
-    GuildRole { role_id: u64 },
-    GuildRoles { guild_id: u64 },
-    GuildChannels { guild_id: u64 },
-    GuildMember { guild_id: u64, user_id: u64 },
-    CurrentUser,
+    /// single channel (guild or dm)
+    Channel { channel_id: u64 }, 
+    /// all guild data
+    Guild { guild_id: u64, flags: GuildFetchOpts }, 
+    /// single guild role
+    GuildRole { role_id: u64 }, 
+    /// all guild roles
+    GuildRoles { guild_id: u64 }, 
+    /// all guild channels
+    GuildChannels { guild_id: u64 }, 
+    /// single guild members
+    GuildMember { guild_id: u64, user_id: u64 }, 
+    /// current user
+    CurrentUser, 
 }
 
 /// A IsResourceInCacheRequest that is type-safe
 #[derive(Clone, Copy)]
 pub enum IsResourceInCacheRequest {
-    Channel { channel_id: u64 },
-    Guild { guild_id: u64 },
-    GuildRole { role_id: u64 },
-    GuildRoles { guild_id: u64 },
-    GuildChannels { guild_id: u64 },
-    GuildMember { guild_id: u64, user_id: u64 },
-    CurrentUser,
+    /// single channel (guild or dm)
+    Channel { channel_id: u64 }, 
+    /// all guild data
+    Guild { guild_id: u64 }, 
+    /// single guild role
+    GuildRole { role_id: u64 }, 
+    /// all guild roles
+    GuildRoles { guild_id: u64 }, 
+    /// all guild channels
+    GuildChannels { guild_id: u64 }, 
+    /// single guild members
+    GuildMember { guild_id: u64, user_id: u64 }, 
+    /// current user
+    CurrentUser, 
 }
 
 /// Stratum mid/high-level client
