@@ -157,6 +157,7 @@ impl StratumClient {
         let Some(v) = self.get_resource_from_cache(req).await? else {
             return Ok(None)
         };
+        println!("{v:?}");
         Ok(serde_json::from_value(v)?)
     }
 
