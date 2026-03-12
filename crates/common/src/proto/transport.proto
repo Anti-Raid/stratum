@@ -74,6 +74,16 @@ message GetResourceRequest {
     OtherAuthorized auth = 4;
 }
 
+message IsResourceInCacheRequest {
+    ResourceType type = 1;
+    uint64 id = 2; // may be 0 (for e.g. R_CURRENT_USER)
+    OtherAuthorized auth = 4;
+}
+
+message IsResourceInCacheResponse {
+    bool cached = 1;
+}
+
 message StratumConfig {
     uint32 num_workers = 1;
 }
@@ -99,6 +109,9 @@ service Stratum {
     //
     // @returns <resource>?
     rpc GetResourceFromCache(GetResourceRequest) returns (AnyValue);
+
+    // IsResourceInCache returns if a resource is in cache or not
+    rpc IsResourceInCache(IsResourceInCacheRequest) returns (IsResourceInCacheResponse);
 
     // GetConfig returns the running stratum config
     rpc GetConfig(OtherAuthorized) returns (StratumConfig);

@@ -14,6 +14,17 @@ pub enum GetResourceRequest {
     CurrentUser,
 }
 
+/// A IsResourceInCacheRequest that is type-safe
+#[derive(Clone, Copy)]
+pub enum IsResourceInCacheRequest {
+    Channel { channel_id: u64 },
+    Guild { guild_id: u64 },
+    GuildRole { role_id: u64 },
+    GuildRoles { guild_id: u64 },
+    GuildChannels { guild_id: u64 },
+    CurrentUser,
+}
+
 /// Stratum mid/high-level client
 pub struct StratumClient {
     client: pb::stratum_client::StratumClient<tonic::transport::Channel>,
@@ -76,6 +87,25 @@ impl StratumClient {
         let mut client = self.client.clone();
         let resp = client.get_resource_from_cache(grr).await?;
         resp.into_inner().to_real_exec()
+    }
+
+    /// IsResourceInCache returns if a resource is in cache or not
+    /// 
+    /// Resource specific notes:
+    /// - For R_CURRENT_USER, id must be 0
+    pub async fn is_resource_in_cache(&self, req: IsResourceInCacheRequest) -> Result<bool, Error> {
+        let grr = match req {
+            IsResourceInCacheRequest::Channel { channel_id } => pb::IsResourceInCacheRequest { r#type: pb::ResourceType::RChannel as i32, id: channel_id, auth: Some(self.oauth()) },
+            IsResourceInCacheRequest::Guild { guild_id } => pb::IsResourceInCacheRequest { r#type: pb::ResourceType::RGuild as i32, id: guild_id, auth: Some(self.oauth()) },
+            IsResourceInCacheRequest::GuildRole { role_id } => pb::IsResourceInCacheRequest { r#type: pb::ResourceType::RGuildRole as i32, id: role_id, auth: Some(self.oauth()) },
+            IsResourceInCacheRequest::GuildRoles { guild_id } => pb::IsResourceInCacheRequest { r#type: pb::ResourceType::RGuildRoles as i32, id: guild_id, auth: Some(self.oauth()) },
+            IsResourceInCacheRequest::GuildChannels { guild_id } => pb::IsResourceInCacheRequest { r#type: pb::ResourceType::RGuildChannels as i32, id: guild_id, auth: Some(self.oauth()) },
+            IsResourceInCacheRequest::CurrentUser => pb::IsResourceInCacheRequest { r#type: pb::ResourceType::RCurrentUser as i32, id: 0, auth: Some(self.oauth()) },
+        };
+
+        let mut client = self.client.clone();
+        let resp = client.is_resource_in_cache(grr).await?;
+        Ok(resp.into_inner().cached)
     }
 
     /// Returns a OtherAuthorized ident for API's requiring this level of identification

@@ -429,6 +429,53 @@ impl pb::stratum_server::Stratum for StratumServer {
         }
     }
 
+    async fn is_resource_in_cache(&self, request: tonic::Request<pb::IsResourceInCacheRequest>) -> Result<tonic::Response<pb::IsResourceInCacheResponse>, Status> {
+        let ccr = request.into_inner();
+        let typ = ccr.r#type();
+        let Some(other) = ccr.auth else {
+            return Err(Status::unauthenticated(format!("No other found")));
+        };
+        validate_oauth(&other).map_err(|e| Status::unauthenticated(format!("Validation failed: {}", e)))?;
+        
+        let is_cached = match typ {
+            pb::ResourceType::RChannel => {
+                let id = Id::new_checked(ccr.id)
+                .ok_or_else(|| Status::invalid_argument("Missing channel info in request"))?;
+
+                self.common_state.cache.channel(id).is_some()
+            }
+            pb::ResourceType::RGuild => {
+                let id = Id::new_checked(ccr.id)
+                .ok_or_else(|| Status::invalid_argument("Missing guild_id in request"))?;
+
+                self.common_state.cache.guild(id).is_some()
+            }
+            pb::ResourceType::RGuildRole => {
+                let id = Id::new_checked(ccr.id)
+                .ok_or_else(|| Status::invalid_argument("Missing role_id in request"))?;
+ 
+                self.common_state.cache.role(id).is_some()
+            }
+            pb::ResourceType::RGuildRoles => {
+                let id = Id::new_checked(ccr.id)
+                .ok_or_else(|| Status::invalid_argument("Missing guild_id in request"))?;
+
+                self.common_state.cache.guild_roles(id).is_some()
+            }
+            pb::ResourceType::RGuildChannels => {
+                let id = Id::new_checked(ccr.id)
+                .ok_or_else(|| Status::invalid_argument("Missing guild_id in request"))?;
+
+                self.common_state.cache.guild_channels(id).is_some()
+            }
+            pb::ResourceType::RCurrentUser => {
+                self.common_state.cache.current_user().is_some()
+            }
+        };
+
+        Ok(tonic::Response::new(pb::IsResourceInCacheResponse { cached: is_cached }))
+    }
+
     async fn get_config(&self, request: tonic::Request<pb::OtherAuthorized>) -> Result<tonic::Response<pb::StratumConfig>, Status> {
         let other = request.into_inner();
         validate_oauth(&other).map_err(|e| Status::unauthenticated(format!("Validation failed: {}", e)))?;
