@@ -87,9 +87,6 @@ impl StratumClient {
     }
 
     /// GetResourceFromCache returns the cached resource data or null
-    /// 
-    /// Resource specific notes:
-    /// - For R_CURRENT_USER, id must be 0
     pub async fn get_resource_from_cache(&self, req: GetResourceRequest) -> Result<Option<serde_json::Value>, Error> {
         let grr = match req {
             GetResourceRequest::Channel { channel_id } => pb::GetResourceRequest { r#type: pb::ResourceType::RChannel as i32, flags: 0, id: channel_id, id_b: 0, auth: Some(self.oauth()) },
@@ -104,6 +101,14 @@ impl StratumClient {
         let mut client = self.client.clone();
         let resp = client.get_resource_from_cache(grr).await?;
         resp.into_inner().to_real_exec()
+    }
+
+    /// Helper method on top of `get_resource_from_cache` that also deserializes into a `T`
+    pub async fn get_parsed_resource_from_cache<T: for<'de> serde::Deserialize<'de>>(&self, req: GetResourceRequest) -> Result<Option<T>, Error> {
+        let Some(v) = self.get_resource_from_cache(req).await? else {
+            return Ok(None)
+        };
+        Ok(serde_json::from_value(v)?)
     }
 
     /// IsResourceInCache returns if a resource is in cache or not
