@@ -97,6 +97,17 @@ message ShardReadyUpdate {
   uint32 total_shards = 2;
 }
 
+message BulkIsResourceInCacheRequest {
+    ResourceType type = 1;
+    repeated uint64 id = 2; // may be 0 (for e.g. R_CURRENT_USER)
+    repeated uint64 id_b = 3; // only set for R_GUILD_MEMBER
+    OtherAuthorized auth = 4;
+}
+
+message BulkIsResourceInCacheResponse {
+    repeated bool cached = 1;
+}
+
 // Stratum service (runs on stratum and called by template-worker)
 service Stratum {
     // EventStream is a streaming RPC that allows the master to send Discord events to the worker
@@ -115,6 +126,9 @@ service Stratum {
 
     // IsResourceInCache returns if a resource is in cache or not
     rpc IsResourceInCache(IsResourceInCacheRequest) returns (IsResourceInCacheResponse);
+
+    // BulkIsResourceInCache returns if a set of resources is in cache or not
+    rpc BulkIsResourceInCache(BulkIsResourceInCacheRequest) returns (BulkIsResourceInCacheResponse);
 
     // GetConfig returns the running stratum config
     rpc GetConfig(OtherAuthorized) returns (StratumConfig);

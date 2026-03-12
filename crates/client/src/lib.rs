@@ -41,6 +41,55 @@ pub enum IsResourceInCacheRequest {
     CurrentUser, 
 }
 
+/// A BulkIsResourceInCacheRequest that is type-safe
+#[derive(Clone)]
+pub enum BulkIsResourceInCacheRequest {
+    /// single channel (guild or dm)
+    Channel { channel_id: Vec<u64> }, 
+    /// all guild data
+    Guild { guild_id: Vec<u64> }, 
+    /// single guild role
+    GuildRole { role_id: Vec<u64> }, 
+    /// all guild roles
+    GuildRoles { guild_id: Vec<u64> }, 
+    /// all guild channels
+    GuildChannels { guild_id: Vec<u64> }, 
+    /// single guild members in format (guild_id, user_id)
+    GuildMember { ids: Vec<(u64, u64)> }, 
+}
+
+impl BulkIsResourceInCacheRequest {
+pub fn into_proto(self, auth: pb::OtherAuthorized) -> pb::BulkIsResourceInCacheRequest {
+        let mut id_b = Vec::new(); // Starts as a zero-allocation empty Vec
+        
+        let (r_type, id) = match self {
+            Self::Channel { channel_id } => (pb::ResourceType::RChannel, channel_id),
+            Self::Guild { guild_id } => (pb::ResourceType::RGuild, guild_id),
+            Self::GuildRole { role_id } => (pb::ResourceType::RGuildRole, role_id),
+            Self::GuildRoles { guild_id } => (pb::ResourceType::RGuildRoles, guild_id),
+            Self::GuildChannels { guild_id } => (pb::ResourceType::RGuildChannels, guild_id),
+            Self::GuildMember { ids } => {
+                // For members, we actually need to populate id_b
+                let mut a = Vec::with_capacity(ids.len());
+                let mut b = Vec::with_capacity(ids.len());
+                for (gid, uid) in ids {
+                    a.push(gid);
+                    b.push(uid);
+                }
+                id_b = b; // Assign the populated vector
+                (pb::ResourceType::RGuildMember, a)
+            }
+        };
+
+        pb::BulkIsResourceInCacheRequest {
+            r#type: r_type as i32,
+            id,
+            id_b,
+            auth: Some(auth),
+        }
+    }
+}
+
 /// Stratum mid/high-level client
 pub struct StratumClient {
     client: pb::stratum_client::StratumClient<tonic::transport::Channel>,
@@ -112,9 +161,6 @@ impl StratumClient {
     }
 
     /// IsResourceInCache returns if a resource is in cache or not
-    /// 
-    /// Resource specific notes:
-    /// - For R_CURRENT_USER, id must be 0
     pub async fn is_resource_in_cache(&self, req: IsResourceInCacheRequest) -> Result<pb::IsResourceInCacheResponse, Error> {
         let grr = match req {
             IsResourceInCacheRequest::Channel { channel_id } => pb::IsResourceInCacheRequest { r#type: pb::ResourceType::RChannel as i32, id: channel_id, id_b: 0, auth: Some(self.oauth()) },
@@ -128,6 +174,14 @@ impl StratumClient {
 
         let mut client = self.client.clone();
         let resp = client.is_resource_in_cache(grr).await?;
+        Ok(resp.into_inner())
+    }
+
+    /// BulkIsResourceInCache returns if a set of resource is in cache or not
+    pub async fn bulk_is_resource_in_cache(&self, req: BulkIsResourceInCacheRequest) -> Result<pb::BulkIsResourceInCacheResponse, Error> {
+        let grr = req.into_proto(self.oauth());
+        let mut client = self.client.clone();
+        let resp = client.bulk_is_resource_in_cache(grr).await?;
         Ok(resp.into_inner())
     }
 

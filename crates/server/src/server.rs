@@ -459,6 +459,42 @@ impl pb::stratum_server::Stratum for StratumServer {
         Ok(tonic::Response::new(pb::IsResourceInCacheResponse { cached: is_cached }))
     }
 
+    async fn bulk_is_resource_in_cache(&self, request: tonic::Request<pb::BulkIsResourceInCacheRequest>) -> Result<tonic::Response<pb::BulkIsResourceInCacheResponse>, Status> {
+        let ccr = request.into_inner();
+        let typ = ccr.r#type();
+        let Some(other) = ccr.auth else {
+            return Err(Status::unauthenticated(format!("No other found")));
+        };
+        validate_oauth(&other).map_err(|e| Status::unauthenticated(format!("Validation failed: {}", e)))?;
+
+        let mut cached = Vec::with_capacity(ccr.id.len());
+        if typ == pb::ResourceType::RGuildMember {
+            // Requires both id and id_b
+            if ccr.id.len() != ccr.id_b.len() {
+                return Err(Status::invalid_argument("id.len() != id_b.len() for GuildMember"));
+            }
+            for (id_a, id_b) in ccr.id.into_iter().zip(ccr.id_b.into_iter()) {
+                cached.push(self.common_state.cache.member(get_id(id_a)?, get_id(id_b)?).is_some());
+            }
+        } else {
+            // Single id only
+            for id in ccr.id {
+                let is_cached = match typ {
+                    pb::ResourceType::RChannel => self.common_state.cache.channel(get_id(id)?).is_some(),
+                    pb::ResourceType::RGuild => self.common_state.cache.guild(get_id(id)?).is_some(),
+                    pb::ResourceType::RGuildRole => self.common_state.cache.role(get_id(id)?).is_some(),
+                    pb::ResourceType::RGuildRoles => self.common_state.cache.guild_roles(get_id(id)?).is_some(),
+                    pb::ResourceType::RGuildChannels => self.common_state.cache.guild_channels(get_id(id)?).is_some(),
+                    pb::ResourceType::RGuildMember => return Err(Status::invalid_argument("unreachable")),
+                    pb::ResourceType::RCurrentUser => self.common_state.cache.current_user().is_some(),
+                };
+                cached.push(is_cached);
+            }
+        }
+
+        Ok(tonic::Response::new(pb::BulkIsResourceInCacheResponse { cached }))
+    }
+
     async fn get_config(&self, request: tonic::Request<pb::OtherAuthorized>) -> Result<tonic::Response<pb::StratumConfig>, Status> {
         let other = request.into_inner();
         validate_oauth(&other).map_err(|e| Status::unauthenticated(format!("Validation failed: {}", e)))?;
