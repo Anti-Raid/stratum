@@ -60,6 +60,11 @@ impl TenantId {
     }
 }
 
+#[inline(always)]
+/// Creates a twilight Id<T> given a `u64` id
+fn get_id<T>(id: u64) -> Result<Id<T>, Status> {
+    Id::new_checked(id).ok_or_else(|| Status::invalid_argument("Invalid Snowflake ID"))
+}
 
 /// Worker struct that holds all the connections for a given shard and handles sending events to them
 pub struct Worker {
@@ -359,8 +364,7 @@ impl pb::stratum_server::Stratum for StratumServer {
   
         match typ {
             pb::ResourceType::RChannel => {
-                let id = Id::new_checked(ccr.id)
-                .ok_or_else(|| Status::invalid_argument("Missing channel info in request"))?;
+                let id = get_id(ccr.id)?;
 
                 let chan = match self.common_state.cache.channel(id) {
                     Some(chan) => pb::AnyValue::from_real(chan.value()),
@@ -370,8 +374,7 @@ impl pb::stratum_server::Stratum for StratumServer {
                 Ok(tonic::Response::new(chan))
             }
             pb::ResourceType::RGuild => {
-                let id = Id::new_checked(ccr.id)
-                .ok_or_else(|| Status::invalid_argument("Missing guild_id in request"))?;
+                let id = get_id(ccr.id)?;
                 let flags = GuildFetchOpts::from_bits(ccr.flags)
                 .ok_or_else(|| Status::invalid_argument("Missing flags in request"))?;
 
@@ -392,8 +395,7 @@ impl pb::stratum_server::Stratum for StratumServer {
                 Ok(tonic::Response::new(g))
             }
             pb::ResourceType::RGuildRole => {
-                let id = Id::new_checked(ccr.id)
-                .ok_or_else(|| Status::invalid_argument("Missing role_id in request"))?;
+                let id = get_id(ccr.id)?;
  
                 let gr = match self.common_state.cache.role(id) {
                     Some(gr) => pb::AnyValue::from_real(gr.value().resource()),
@@ -403,16 +405,14 @@ impl pb::stratum_server::Stratum for StratumServer {
                 Ok(tonic::Response::new(gr))
             }
             pb::ResourceType::RGuildRoles => {
-                let id = Id::new_checked(ccr.id)
-                .ok_or_else(|| Status::invalid_argument("Missing guild_id in request"))?;
+                let id = get_id(ccr.id)?;
 
                 let gr = crate::cacher_guild::get_roles_resource(&self.common_state.cache, id)?;
 
                 Ok(tonic::Response::new(gr))
             }
             pb::ResourceType::RGuildChannels => {
-                let id = Id::new_checked(ccr.id)
-                .ok_or_else(|| Status::invalid_argument("Missing guild_id in request"))?;
+                let id = get_id(ccr.id)?;
 
                 let gc = crate::cacher_guild::get_channels_resource(&self.common_state.cache, id)?;
 
@@ -437,11 +437,6 @@ impl pb::stratum_server::Stratum for StratumServer {
         };
         validate_oauth(&other).map_err(|e| Status::unauthenticated(format!("Validation failed: {}", e)))?;
         
-        #[inline(always)]
-        fn get_id<T>(id: u64) -> Result<Id<T>, Status> {
-            Id::new_checked(id).ok_or_else(|| Status::invalid_argument("Invalid Snowflake ID"))
-        }
-
         let is_cached = match typ {
             pb::ResourceType::RChannel => self.common_state.cache.channel(get_id(ccr.id)?).is_some(),
             pb::ResourceType::RGuild => self.common_state.cache.guild(get_id(ccr.id)?).is_some(),
