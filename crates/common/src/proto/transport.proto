@@ -18,8 +18,8 @@ message DiscordEvent {
     // The tenant id this event is associated with
     uint64 guild_id = 3;
 
-    // The user id this event is associated with
-    uint64 user_id = 4;
+    // The message author (if a message create/update event)
+    uint64 msg_author = 4;
 }
 
 message Worker {

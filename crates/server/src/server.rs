@@ -620,7 +620,7 @@ fn dispatch_single(shard_id: u32, event_json: String, common_state: &CommonState
         return Ok(());
     }
     
-    let (guild_id, user_id) = deduce_ids(&event_json, &parsed_event);
+    let (guild_id, msg_author) = deduce_ids(&event_json, &parsed_event);
     let Some(guild_id) = guild_id else {
         // ignore events we can't deduce a guild_id for, since we won't know which tenant to route them to
         //
@@ -635,13 +635,13 @@ fn dispatch_single(shard_id: u32, event_json: String, common_state: &CommonState
         event_name,
         payload: event_json,
         guild_id: guild_id.get(),
-        user_id: user_id.map(|x| x.get()).unwrap_or(0)
+        msg_author: msg_author.map(|x| x.get()).unwrap_or(0)
     });
 
     Ok(())
 }
 
-/// Helper method to deduce the guild_id from an event, if possible
+/// Helper method to deduce the guild_id and msg_author from an event, if possible
 fn deduce_ids(raw_json: &str, parsed_event: &Option<Event>) -> (Option<Id<GuildMarker>>, Option<Id<UserMarker>>) {
     if let Some(event) = parsed_event {
         // Find guild_id, handling cases not handled by twilight's event.guild_id()
@@ -652,38 +652,18 @@ fn deduce_ids(raw_json: &str, parsed_event: &Option<Event>) -> (Option<Id<GuildM
             _ => event.guild_id()
         };
 
-        let user_id = match event {
+        let msg_author = match event {
             Event::MessageCreate(m) => Some(m.author.id),
             Event::MessageUpdate(m) => Some(m.author.id),
-            Event::ReactionAdd(m) => Some(m.user_id),
-            Event::ReactionRemove(m) => Some(m.user_id),
-            _ => {
-                // Fallback to wildcard parsing to try extracting user id from event
-                #[derive(Deserialize)]
-                struct IdData {
-                    user_id: Option<Id<UserMarker>>
-                }
-
-                #[derive(Deserialize)]
-                struct IdWrapper {
-                    d: IdData,
-                }
-                
-                if let Ok(wrapper) = serde_json::from_str::<IdWrapper>(raw_json) {
-                    wrapper.d.user_id
-                } else {
-                    None
-                }
-            }
+            _ => None,
         };
 
-        (guild_id, user_id)
+        (guild_id, msg_author)
     } else {
-        // Fallback to wildcard parsing to try extracting guild id and user id from event
+        // Fallback to wildcard parsing to try extracting guild id from event
         #[derive(Deserialize)]
         struct IdData {
             guild_id: Option<Id<GuildMarker>>,
-            user_id: Option<Id<UserMarker>>
         }
 
         #[derive(Deserialize)]
@@ -692,7 +672,7 @@ fn deduce_ids(raw_json: &str, parsed_event: &Option<Event>) -> (Option<Id<GuildM
         }
         
         if let Ok(wrapper) = serde_json::from_str::<IdWrapper>(raw_json) {
-            return (wrapper.d.guild_id, wrapper.d.user_id);
+            return (wrapper.d.guild_id, None);
         }
 
         // If we can't find the ids, return None and ignore the event, since we won't know which tenant to route it to
