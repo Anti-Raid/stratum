@@ -1,4 +1,4 @@
-use std::{collections::HashMap, pin::Pin, sync::{Arc, RwLock, atomic::{AtomicU64, Ordering}}, time::Duration};
+use std::{collections::HashMap, pin::Pin, sync::{Arc, RwLock, atomic::{AtomicU64, Ordering}}, task::{Context, Poll}, time::Duration};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use stratum_common::{pb, GuildFetchOpts};
@@ -58,36 +58,68 @@ fn get_id<T>(id: u64) -> Result<Id<T>, Status> {
     Id::new_checked(id).ok_or_else(|| Status::invalid_argument("Invalid Snowflake ID"))
 }
 
+/// Special holder struct that when dropped, removes the connection from the workers connection list
+pub struct ConnectionGuard {
+    conn_id: u64,
+    worker: Worker,
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        {
+            let mut conn_txs = self.worker.conn_txs.write().unwrap();
+            if conn_txs.remove(&self.conn_id).is_none() {
+                return;
+            }
+        }
+
+        log::info!("Cleaned up connection {} for worker {}", self.conn_id, self.worker.id);
+    }
+}
+
+/// Stream that holds a connection guard to drop the connection from the worker map once closed
+pub struct GuardedStream<S> {
+    inner: S,
+    _guard: ConnectionGuard,
+}
+
+impl<S: Stream + Unpin> Stream for GuardedStream<S> {
+    type Item = S::Item;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.inner).poll_next(cx)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+
 /// Worker struct that holds all the connections for a given shard and handles sending events to them
+#[derive(Clone)]
 pub struct Worker {
     conn_txs: Arc<RwLock<HashMap<u64, mpsc::UnboundedSender<Result<pb::DiscordEvent, Status>>>>>,
-    id: AtomicU64,
+    curr_id: Arc<AtomicU64>,
+    id: usize
 }
 
 impl Worker {
-    pub fn new() -> Self {
+    pub fn new(id: usize) -> Self {
         Self {
             conn_txs: Arc::new(RwLock::new(HashMap::new())),
-            id: AtomicU64::new(0),
+            curr_id: AtomicU64::new(0).into(),
+            id
         }
     }
 
-    pub fn add_connection(&self, tx: mpsc::UnboundedSender<Result<pb::DiscordEvent, Status>>) {
-        let next_id = self.id.fetch_add(1, Ordering::SeqCst);
+    pub fn add_connection(&self, tx: mpsc::UnboundedSender<Result<pb::DiscordEvent, Status>>) -> ConnectionGuard {
+        let next_id = self.curr_id.fetch_add(1, Ordering::SeqCst);
         {
             let mut conn_txs = self.conn_txs.write().unwrap();
             conn_txs.insert(next_id, tx.clone());
         }
 
-        let conn_txs = self.conn_txs.clone();
-        tokio::spawn(async move {
-            tx.closed().await;
-
-            {
-                let mut conn_txs = conn_txs.write().unwrap();
-                conn_txs.remove(&next_id);
-            }
-        });
+        ConnectionGuard { conn_id: next_id, worker: self.clone() }
     }
     
     pub fn send_event(&self, event: pb::DiscordEvent) {
@@ -115,8 +147,8 @@ impl WorkerSet {
     /// Creates a new WorkerSet with the given number of workers
     pub fn new(num_workers: usize) -> Self {
         let mut workers = Vec::with_capacity(num_workers);
-        for _ in 0..num_workers {
-            workers.push(Arc::new(Worker::new()));
+        for i in 0..num_workers {
+            workers.push(Arc::new(Worker::new(i)));
         }
         Self { workers }
     }
@@ -300,8 +332,12 @@ impl pb::stratum_server::Stratum for StratumServer {
         validate_worker(&worker).map_err(|e| Status::unauthenticated(format!("Worker validation failed: {}", e)))?;
 
         let (tx, rx) = mpsc::unbounded_channel();
-        self.common_state.workers.get_worker_by_id(worker.worker_id as usize).add_connection(tx);
+        let cs = self.common_state.workers.get_worker_by_id(worker.worker_id as usize).add_connection(tx);
         let rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
+        let rx = GuardedStream {
+            inner: rx,
+            _guard: cs
+        };
         Ok(tonic::Response::new(Box::pin(rx) as Self::EventStreamStream))
     }
 
