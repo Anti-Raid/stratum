@@ -266,9 +266,15 @@ pub fn get_guild(
         afk_channel_id: guild.afk_channel_id(),
         afk_timeout: guild.afk_timeout(),
         application_id: guild.application_id(),
-        approximate_member_count: None, // Only present in with_counts HTTP endpoint
+        approximate_member_count: guild.member_count(), // Provided here for compatibility
         banner: guild.banner().map(ToOwned::to_owned),
-        approximate_presence_count: None, // Only present in with_counts HTTP endpoint
+        approximate_presence_count: if flags.contains(GuildFetchOpts::INCLUDE_PRESENCES) {
+            Some(presences.len() as u64) // fast-path
+        } else {
+            cache
+            .guild_presences(guild_id)
+            .map(|reference| reference.len() as u64)
+        },
         channels: guild_channels,
         default_message_notifications: guild.default_message_notifications(),
         description: guild.description().map(ToString::to_string),
