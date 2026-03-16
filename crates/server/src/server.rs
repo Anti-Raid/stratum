@@ -28,7 +28,7 @@ pub fn validate_worker(worker: &pb::Worker) -> Result<(), crate::Error> {
     Ok(())
 }
 
-/// Validates other authorized requests
+/// validates other authorized requests
 pub fn validate_oauth(oauth: &pb::OtherAuthorized) -> Result<(), crate::Error> {
     if oauth.grpc_access_key != CONFIG.grpc_access_key {
         return Err("Invalid gRPC access key".into());
@@ -37,16 +37,23 @@ pub fn validate_oauth(oauth: &pb::OtherAuthorized) -> Result<(), crate::Error> {
 }
 
 /// Core ID struct
+/// 
+/// Tenant is for a GUILD currently, but we can expand this in the future if we want to support user-installed apps or other tenant types
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum TenantId {
-    Guild(Id<GuildMarker>),
+    Guild(Id<GuildMarker>), // Marker is for type-safe IDs, so we don't accidentally use a channel ID where a guild ID is expected, etc.    
 }
 
 impl TenantId {
-    /// Returns a the worker ID given tenant ID
+    /// Determines which worker gets the tenant
+    /// 
+    /// To ensure that all events for a given tenant go to the same worker, we shard by tenant ID. 
+    /// based on Discords sharding formula (id >> 22) % num_shards.
+    ///
+    /// Returns the worker ID that the event should be routed to for the given tenant (ID)
     pub fn worker_id(self, num_workers: usize) -> usize {
         match self {
-            // This is safe as AntiRaid workers does not currently support 32 bit platforms
+            // This is safe as AntiRaid workers do not currently support 32 bit platforms
             TenantId::Guild(guild_id) => (guild_id.get() >> 22) as usize % num_workers,
         }
     }
@@ -83,6 +90,7 @@ pub struct GuardedStream<S> {
     _guard: ConnectionGuard,
 }
 
+// need Unpin and Pin for safe polling of async streams
 impl<S: Stream + Unpin> Stream for GuardedStream<S> {
     type Item = S::Item;
 
@@ -129,7 +137,7 @@ impl Worker {
             1 => {
                 let _ = conn_txs.iter().map(|(_, c)| c).next().unwrap().send(Ok(event)); // only one connection, send directly without needing to clone
             }
-            _ => {
+            _ => { // multiple connections, need to clone the event for each connection
                 for (_, tx) in conn_txs.iter() {
                     let _ = tx.send(Ok(event.clone()));
                 }
@@ -162,6 +170,12 @@ impl WorkerSet {
     /// Returns the worker for the given tenant ID
     pub fn get_worker_by_id(&self, wid: usize) -> Arc<Worker> {
         Arc::clone(&self.workers[wid])
+    }
+
+    pub fn close_all_connections(&self) {
+        for worker in &self.workers {
+            worker.conn_txs.write().unwrap().clear();
+        }
     }
 }
 
@@ -768,6 +782,7 @@ pub async fn server() -> Result<(), crate::Error> {
 
     // Push server count printer task
     let common_state_ref = common_state.clone();
+    let shutdown_state = common_state.clone();
     let mut shutdown_rx_ref = shutdown_rx.clone();
     tasks.push(tokio::spawn(async move {
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(30));
@@ -811,6 +826,7 @@ pub async fn server() -> Result<(), crate::Error> {
 
     signal::ctrl_c().await?;
     _ = shutdown_tx.send(true);
+    shutdown_state.workers.close_all_connections();
 
     for task in tasks {
         tokio::select! {
