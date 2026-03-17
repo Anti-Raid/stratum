@@ -37,11 +37,10 @@ pub fn validate_oauth(oauth: &pb::OtherAuthorized) -> Result<(), crate::Error> {
 }
 
 /// Core ID struct
-/// 
-/// Tenant is for a GUILD currently, but we can expand this in the future if we want to support user-installed apps or other tenant types
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum TenantId {
     Guild(Id<GuildMarker>), // Marker is for type-safe IDs, so we don't accidentally use a channel ID where a guild ID is expected, etc.    
+    User(Id<UserMarker>),
 }
 
 impl TenantId {
@@ -55,6 +54,7 @@ impl TenantId {
         match self {
             // This is safe as AntiRaid workers do not currently support 32 bit platforms
             TenantId::Guild(guild_id) => (guild_id.get() >> 22) as usize % num_workers,
+            TenantId::User(user_id) => (user_id.get() >> 22) as usize % num_workers,
         }
     }
 }
@@ -671,33 +671,35 @@ fn dispatch_single(shard_id: u32, event_json: String, common_state: &CommonState
         return Ok(());
     }
     
-    let (event, guild_id, msg_author) = deduce_parts(&event_json, &parsed_event);
+    let (event, guild_id, msg_author, target_user) = deduce_parts(&event_json, &parsed_event);
     let Some(event) = event else {
         log::info!("Ignoring msg with no known 'd': {event_json}");
         return Ok(());
     };
-    let Some(guild_id) = guild_id else {
-        // ignore events we can't deduce a guild_id for, since we won't know which tenant to route them to
-        //
-        // TODO: Change this when we support user-installed apps in stratum
-        log::info!("Ignoring msg with no known guild id: {event}");
-        return Ok(()); 
+    
+    let tenant_id = if let Some(guild_id) = guild_id {
+        TenantId::Guild(guild_id) 
+    } else if let Some(user_id) = target_user {
+        TenantId::User(user_id)
+    } else {
+        log::info!("Ignoring msg with no guild_id or target_user: {event_json}");
+        return Ok(());
     };
 
-    let tenant_id = TenantId::Guild(guild_id);
     let worker = common_state.workers.get_worker_for_tenant(tenant_id);
     worker.send_event(pb::DiscordEvent {
         event_name,
         payload: event,
-        guild_id: guild_id.get(),
-        msg_author: msg_author.map(|x| x.get()).unwrap_or(0)
+        guild_id: guild_id.map(|x| x.get()).unwrap_or(0),
+        msg_author: msg_author.map(|x| x.get()).unwrap_or(0),
+        target_user: target_user.map(|x| x.get()).unwrap_or(0)
     });
 
     Ok(())
 }
 
 /// Helper method to deduce the d key, guild_id and msg_author from an event, if possible
-fn deduce_parts(raw_json: &str, parsed_event: &Option<Event>) -> (Option<String>, Option<Id<GuildMarker>>, Option<Id<UserMarker>>) {
+fn deduce_parts(raw_json: &str, parsed_event: &Option<Event>) -> (Option<String>, Option<Id<GuildMarker>>, Option<Id<UserMarker>>, Option<Id<UserMarker>>) {
     #[derive(Deserialize)]
     struct Evt<'a> {
         #[serde(borrow)]
@@ -705,7 +707,7 @@ fn deduce_parts(raw_json: &str, parsed_event: &Option<Event>) -> (Option<String>
     }
 
     let Ok(input) = serde_json::from_str::<Evt>(raw_json) else {
-        return (None, None, None)
+        return (None, None, None, None);
     };
 
     if let Some(event) = parsed_event {
@@ -723,7 +725,13 @@ fn deduce_parts(raw_json: &str, parsed_event: &Option<Event>) -> (Option<String>
             _ => None,
         };
 
-        (Some(input.d.to_string()), guild_id, msg_author)
+        let target_user = match event {
+            // for interactions we want user id of command invoker
+            Event::InteractionCreate(e) => e.author_id(),
+            _ => None,
+        };
+
+        (Some(input.d.to_string()), guild_id, msg_author, target_user)
     } else {
         // Fallback to wildcard parsing to try extracting guild id from event
         #[derive(Deserialize)]
@@ -732,11 +740,11 @@ fn deduce_parts(raw_json: &str, parsed_event: &Option<Event>) -> (Option<String>
         }
         
         if let Ok(wrapper) = serde_json::from_str::<IdData>(input.d.get()) {
-            return (Some(input.d.to_string()), wrapper.guild_id, None);
+            return (Some(input.d.to_string()), wrapper.guild_id, None, None);
         }
 
         // If we can't find the ids, return None and ignore the event, since we won't know which tenant to route it to
-        (None, None, None)
+        (None, None, None, None)
     }
 }
 

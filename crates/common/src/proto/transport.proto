@@ -20,6 +20,9 @@ message DiscordEvent {
 
     // The message author (if a message create/update event)
     uint64 msg_author = 4;
+
+    // For user-installed apps when routed by user (no guild)
+    uint64 target_user = 5;
 }
 
 message Worker {
