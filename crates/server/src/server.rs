@@ -5,7 +5,7 @@ use stratum_common::{pb, GuildFetchOpts};
 use tokio::{signal, sync::watch, sync::mpsc};
 use twilight_cache_inmemory::model::CachedGuild;
 use twilight_gateway_queue::InMemoryQueue;
-use twilight_model::{channel::Channel, gateway::OpCode, guild::{Member, Role}, id::{Id, marker::{GuildMarker, UserMarker}}, user::CurrentUser};
+use twilight_model::{application::interaction::InteractionContextType, channel::Channel, gateway::OpCode, guild::{Member, Role}, id::{Id, marker::{GuildMarker, UserMarker}}, user::CurrentUser};
 use twilight_gateway::{
     CloseFrame, ConfigBuilder, Event, EventTypeFlags, Intents, Message, Shard, ShardId, ShardState
 };
@@ -727,7 +727,11 @@ fn deduce_parts(raw_json: &str, parsed_event: &Option<Event>) -> (Option<String>
 
         let target_user = match event {
             // for interactions we want user id of command invoker
-            Event::InteractionCreate(e) => e.author_id(),
+            // have to check interaction type for private_channel or guild
+            Event::InteractionCreate(e) => match e.context {
+                Some(InteractionContextType::BotDm | InteractionContextType::PrivateChannel) => e.author_id(),
+                _ => None,
+            },
             _ => None,
         };
 
