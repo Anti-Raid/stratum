@@ -62,3 +62,11 @@ impl pb::AnyValue {
 }
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>; // This is constant and should be copy pasted
+
+
+/// Given a tenant id and number of workers, returns the shared worker id.
+/// 
+/// Currently based on Discords sharding formula (id >> 22) % num_shards.
+pub fn worker_id_for_tenant(tenant_id: u64, num_workers: usize) -> usize {
+    (tenant_id >> 22) as usize % num_workers
+}

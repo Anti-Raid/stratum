@@ -1,5 +1,5 @@
 use stratum_common::{Error, GuildFetchOpts};
-pub use stratum_common::pb;
+pub use stratum_common::{pb, worker_id_for_tenant};
 use futures_util::{Stream, StreamExt};
 use tokio::sync::watch;
 

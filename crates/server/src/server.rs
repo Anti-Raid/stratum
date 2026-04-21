@@ -1,7 +1,7 @@
 use std::{collections::HashMap, pin::Pin, sync::{Arc, RwLock, atomic::{AtomicU64, Ordering}}, task::{Context, Poll}, time::Duration};
 use serde::Deserialize;
 use serde_json::value::RawValue;
-use stratum_common::{pb, GuildFetchOpts};
+use stratum_common::{GuildFetchOpts, pb, worker_id_for_tenant};
 use tokio::{signal, sync::watch, sync::mpsc};
 use twilight_cache_inmemory::model::CachedGuild;
 use twilight_gateway_queue::InMemoryQueue;
@@ -53,8 +53,8 @@ impl TenantId {
     pub fn worker_id(self, num_workers: usize) -> usize {
         match self {
             // This is safe as AntiRaid workers do not currently support 32 bit platforms
-            TenantId::Guild(guild_id) => (guild_id.get() >> 22) as usize % num_workers,
-            TenantId::User(user_id) => (user_id.get() >> 22) as usize % num_workers,
+            TenantId::Guild(guild_id) => worker_id_for_tenant(guild_id.get(), num_workers),
+            TenantId::User(user_id) => worker_id_for_tenant(user_id.get(), num_workers),
         }
     }
 }
