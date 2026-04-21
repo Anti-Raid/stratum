@@ -18,6 +18,8 @@ pub enum GetResourceRequest {
     GuildChannels { guild_id: u64 }, 
     /// single guild members
     GuildMember { guild_id: u64, user_id: u64 }, 
+    /// guild id
+    GuildIds,
     /// current user
     CurrentUser, 
 }
@@ -144,6 +146,7 @@ impl StratumClient {
             GetResourceRequest::GuildRoles { guild_id } => pb::GetResourceRequest { r#type: pb::ResourceType::RGuildRoles as i32, flags: 0, id: guild_id, id_b: 0, auth: Some(self.oauth()) },
             GetResourceRequest::GuildChannels { guild_id } => pb::GetResourceRequest { r#type: pb::ResourceType::RGuildChannels as i32, flags: 0, id: guild_id, id_b: 0, auth: Some(self.oauth()) },
             GetResourceRequest::GuildMember { guild_id, user_id } => pb::GetResourceRequest { r#type: pb::ResourceType::RGuildMember as i32, flags: 0, id: guild_id, id_b: user_id, auth: Some(self.oauth()) },
+            GetResourceRequest::GuildIds => pb::GetResourceRequest { r#type: pb::ResourceType::RGuildIds as i32, id: 0, id_b: 0, flags: 0, auth: Some(self.oauth()) },
             GetResourceRequest::CurrentUser => pb::GetResourceRequest { r#type: pb::ResourceType::RCurrentUser as i32, flags: 0, id: 0, id_b: 0, auth: Some(self.oauth()) },
         };
 

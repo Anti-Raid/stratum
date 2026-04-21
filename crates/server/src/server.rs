@@ -469,6 +469,14 @@ impl pb::stratum_server::Stratum for StratumServer {
 
                 Ok(tonic::Response::new(gm))
             }
+            pb::ResourceType::RGuildIds => {
+                if !CONFIG.allow_guild_ids_get.unwrap_or(false) {
+                    return Err(Status::failed_precondition("getting guild ids has been disabled"));
+                }
+                let ids = self.common_state.cache.iter().guilds().map(|x| x.id()).collect::<Vec<_>>();
+                let resp = pb::AnyValue::from_real(&ids)?;
+                Ok(tonic::Response::new(resp))
+            }
             pb::ResourceType::RCurrentUser => {
                 let cu = match self.common_state.cache.current_user() {
                     Some(cu) => pb::AnyValue::from_real(&cu),
@@ -496,6 +504,7 @@ impl pb::stratum_server::Stratum for StratumServer {
             pb::ResourceType::RGuildChannels => self.common_state.cache.guild_channels(get_id(ccr.id)?).is_some(),
             pb::ResourceType::RGuildMember => self.common_state.cache.member(get_id(ccr.id)?, get_id(ccr.id_b)?).is_some(),
             pb::ResourceType::RCurrentUser => self.common_state.cache.current_user().is_some(),
+            pb::ResourceType::RGuildIds => return Err(Status::failed_precondition("operation not supported"))
         };
 
         Ok(tonic::Response::new(pb::IsResourceInCacheResponse { cached: is_cached }))
@@ -529,6 +538,7 @@ impl pb::stratum_server::Stratum for StratumServer {
                     pb::ResourceType::RGuildChannels => self.common_state.cache.guild_channels(get_id(id)?).is_some(),
                     pb::ResourceType::RGuildMember => return Err(Status::invalid_argument("unreachable")),
                     pb::ResourceType::RCurrentUser => self.common_state.cache.current_user().is_some(),
+                    pb::ResourceType::RGuildIds => return Err(Status::failed_precondition("operation not supported")) // must use rguild instead
                 };
                 cached.push(is_cached);
             }

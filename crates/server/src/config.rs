@@ -16,6 +16,7 @@ pub struct Config {
     pub grpc_access_key: String,
     pub grpc_address: String,
     pub num_workers: usize, // number of workers that will connect to stratum, used for tenant ID sharding
+    pub allow_guild_ids_get: Option<bool>, // whether or not to allow getting guild ids from this stratum instance, defaults to false
 
     #[serde(skip)]
     /// Setup by load() for statistics

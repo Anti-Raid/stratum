@@ -61,6 +61,7 @@ enum ResourceType {
     R_GUILD_ROLES = 3;
     R_GUILD_CHANNELS = 4;
     R_GUILD_MEMBER = 5;
+    R_GUILD_IDS = 6;
     R_CURRENT_USER = 10;
 }
 
