@@ -45,9 +45,6 @@ pub enum TenantId {
 
 impl TenantId {
     /// Determines which worker gets the tenant
-    /// 
-    /// To ensure that all events for a given tenant go to the same worker, we shard by tenant ID. 
-    /// based on Discords sharding formula (id >> 22) % num_shards.
     ///
     /// Returns the worker ID that the event should be routed to for the given tenant (ID)
     pub fn worker_id(self, num_workers: usize) -> usize {
