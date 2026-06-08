@@ -1,0 +1,5 @@
+token: "TOKEN HERE"
+intents: 20031103
+grpc_access_key: "PUT A RANDOM STRING HERE"
+grpc_address: "127.0.0.1:12944"
+num_workers: 2
